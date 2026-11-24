@@ -52,9 +52,11 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
         run: |
-          SSH="ssh -i ~/.ssh/deploy_key -p ${SSH_PORT:-22}"
+          SSH="ssh -i ~/.ssh/deploy_key -p ${SSH_PORT:-22} -o BatchMode=yes -o ConnectTimeout=20 -o IdentitiesOnly=yes"
           RELEASE="/var/www/huyagtan.mn/releases/${GITHUB_SHA}"
-          $SSH "$SSH_USER@$SSH_HOST" "mkdir -p $RELEASE"
+          echo "Public key fingerprint GitHub is using:"; ssh-keygen -lf ~/.ssh/deploy_key
+          # First connection verbose so login problems show up in the log
+          $SSH -v "$SSH_USER@$SSH_HOST" "mkdir -p $RELEASE" 2>&1 | grep -Ev '^debug1: (Reading|kex_|SSH2_MSG|expecting|rekey|channel|client_input|Sending env|pledge)' ; test ${PIPESTATUS[0]} -eq 0
           rsync -az --delete -e "$SSH" .next/standalone/ "$SSH_USER@$SSH_HOST:$RELEASE/"
           $SSH "$SSH_USER@$SSH_HOST" "
             set -e
