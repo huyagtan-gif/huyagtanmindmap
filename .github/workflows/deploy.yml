@@ -1,0 +1,66 @@
+name: Deploy to huyagtan.mn
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        env:
+          NEXT_PUBLIC_BUILD_SHA: ${{ github.sha }}
+        run: npm run build
+
+      - name: Package standalone output
+        run: |
+          cp -r public .next/standalone/public
+          mkdir -p .next/standalone/.next
+          cp -r .next/static .next/standalone/.next/static
+
+      - name: Set up SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${SSH_PORT:-22}" "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload and restart
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          SSH="ssh -i ~/.ssh/deploy_key -p ${SSH_PORT:-22}"
+          RELEASE="/var/www/huyagtan.mn/releases/${GITHUB_SHA}"
+          $SSH "$SSH_USER@$SSH_HOST" "mkdir -p $RELEASE"
+          rsync -az --delete -e "$SSH" .next/standalone/ "$SSH_USER@$SSH_HOST:$RELEASE/"
+          $SSH "$SSH_USER@$SSH_HOST" "
+            set -e
+            ln -sfn $RELEASE /var/www/huyagtan.mn/current
+            sudo /usr/bin/systemctl restart huyagtan
+            sleep 3
+            curl -fsS -o /dev/null http://127.0.0.1:3000/ && echo 'App is up'
+            cd /var/www/huyagtan.mn/releases && ls -1t | tail -n +4 | xargs -r rm -rf
+          "
