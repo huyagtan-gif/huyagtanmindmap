@@ -10,9 +10,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment: production
     steps:
       - uses: actions/checkout@v4
 
@@ -34,52 +33,36 @@ jobs:
           cp -r public .next/standalone/public
           mkdir -p .next/standalone/.next
           cp -r .next/static .next/standalone/.next/static
+          tar -C .next/standalone -czf app.tgz .
 
-      - name: Set up SSH
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          # No ssh-keyscan: its burst of 5 connections gets the VPS port forwarder to drop the next one.
-          # One multiplexed connection is reused for every ssh/rsync call below.
-          cat > ~/.ssh/config <<CFG
-          Host deploy-target
-            HostName $SSH_HOST
-            Port ${SSH_PORT:-22}
-            IdentityFile ~/.ssh/deploy_key
-            IdentitiesOnly yes
-            BatchMode yes
-            ConnectTimeout 20
-            StrictHostKeyChecking accept-new
-            ControlMaster auto
-            ControlPath ~/.ssh/cm-%C
-            ControlPersist 5m
-            ServerAliveInterval 15
-          CFG
-          chmod 600 ~/.ssh/config
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app
+          path: app.tgz
+          retention-days: 7
 
-      - name: Upload and restart
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SSH_USER: ${{ secrets.SSH_USER }}
+  # Runs on the VPS itself (self-hosted runner, see deploy/setup-runner.sh).
+  # The runner only makes outbound connections to GitHub, so no inbound SSH is needed.
+  deploy:
+    needs: build
+    runs-on: [self-hosted, huyagtan]
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: app
+
+      - name: Install release and restart
         run: |
-          T="$SSH_USER@deploy-target"
+          set -e
           RELEASE="/var/www/huyagtan.mn/releases/${GITHUB_SHA}"
-          if ! ssh -v "$T" "mkdir -p $RELEASE" 2> ssh-debug.log; then
-            grep -E 'Connecting|Connection established|Authenticat|Permission|denied|refused|closed|timed out|Offering|Server accepts' ssh-debug.log
-            exit 1
-          fi
-          rsync -az --delete -e ssh .next/standalone/ "$T:$RELEASE/"
-          ssh "$T" "
-            set -e
-            ln -sfn $RELEASE /var/www/huyagtan.mn/current
-            sudo /usr/bin/systemctl restart huyagtan
-            sleep 3
-            curl -fsS -o /dev/null http://127.0.0.1:3000/ && echo 'App is up'
-            cd /var/www/huyagtan.mn/releases && ls -1t | tail -n +4 | xargs -r rm -rf
-          "
+          rm -rf "$RELEASE" && mkdir -p "$RELEASE"
+          tar -xzf app.tgz -C "$RELEASE"
+          ln -sfn "$RELEASE" /var/www/huyagtan.mn/current
+          sudo /usr/bin/systemctl restart huyagtan
+          for i in $(seq 1 15); do
+            curl -fsS -o /dev/null http://127.0.0.1:3000/ && { echo "App is up"; break; }
+            sleep 1
+            [ "$i" = 15 ] && { sudo /usr/bin/journalctl -u huyagtan -n 50 --no-pager; exit 1; }
+          done
+          cd /var/www/huyagtan.mn/releases && ls -1t | tail -n +4 | xargs -r rm -rf

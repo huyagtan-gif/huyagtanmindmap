@@ -2,48 +2,45 @@
 
 `main` салбар руу push хийх бүрт GitHub Actions:
 
-1. Next.js-ийг GitHub дээр build хийнэ (серверийн 1 GB RAM build хийхэд хүрэлцэхгүй тул).
-2. Бэлэн болсон файлуудыг SSH + rsync-ээр сервер рүү `/var/www/huyagtan.mn/releases/<commit>` руу хуулна.
-3. `current` холбоосыг шинэ хувилбар руу шилжүүлээд `huyagtan` service-ийг дахин асаана.
-4. Сүүлийн 3 хувилбарыг хадгалж, хуучныг устгана.
+1. **build** (GitHub-ийн сервер дээр): Next.js-ийг build хийж, `app.tgz` болгон хадгална. Манай VPS-ийн 1 GB RAM build хийхэд хүрэлцэхгүй тул энд хийнэ.
+2. **deploy** (VPS дээр ажиллах self-hosted runner): `app.tgz`-г татаж `/var/www/huyagtan.mn/releases/<commit>` руу задлаад,
+   `current` холбоосыг шилжүүлж `huyagtan` service-ийг дахин асаана. Сүүлийн 3 хувилбарыг хадгална.
+
+Runner нь зөвхөн GitHub руу **гадагш** холбогддог тул exacloud-ийн SSH порт дамжуулагчаас хамаарахгүй.
+(GitHub-ээс SSH-ээр орох арга ажиллаагүй: `ssh.exa-vps.com:22001` нь GitHub-ийн серверүүдийн холболтыг дамжуулдаггүй.)
 
 ## 1. Серверийг нэг удаа бэлдэх
 
-VPS-ийн **Консол** (эсвэл SSH)-оор root-оор орж:
+VPS-ийн **Консол**-оор:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/huyagtan-gif/huyagtanmindmap/main/deploy/setup-server.sh -o setup-server.sh
 sudo bash setup-server.sh таны@имэйл.mn
 ```
 
-Имэйл нь Let's Encrypt HTTPS гэрчилгээнд хэрэглэгдэнэ. Скрипт Node.js 22, Nginx, Certbot суулгаж,
-`deploy` хэрэглэгч, SSH түлхүүр, systemd service, Nginx тохиргоо, HTTPS-ийг үүсгэнэ.
+Node.js 22, Nginx, Certbot, `deploy` хэрэглэгч, systemd service, Nginx тохиргоо, HTTPS-ийг үүсгэнэ.
 
-Төгсгөлд нь гарах командаар private key-г хараад хуулна:
+## 2. GitHub runner суулгах
+
+1. GitHub → repo → **Settings → Actions → Runners → New self-hosted runner** → Linux, x64.
+2. Тэнд гарах `--token XXXXX` доторх токеныг хуулна (1 цаг хүчинтэй).
+3. VPS консолд:
 
 ```bash
-sudo cat /home/deploy/.ssh/github_actions
+curl -fsSL https://raw.githubusercontent.com/huyagtan-gif/huyagtanmindmap/main/deploy/setup-runner.sh -o setup-runner.sh
+sudo bash setup-runner.sh ТОКЕН
 ```
 
-## 2. GitHub Secrets нэмэх
-
-Repo → **Settings → Secrets and variables → Actions → New repository secret**:
-
-| Нэр | Утга |
-| --- | --- |
-| `SSH_HOST` | Серверийн гадаад IP эсвэл `huyagtan.mn` |
-| `SSH_PORT` | VPS самбарын **Порт (SSH, SQL)** табд байгаа SSH порт |
-| `SSH_USER` | `deploy` |
-| `SSH_PRIVATE_KEY` | Дээрх `github_actions` файлын бүх агуулга (`-----BEGIN` ... `END-----` хүртэл) |
+Runners хуудсанд `huyagtan-vps` нь **Idle** гэж харагдвал бэлэн.
 
 ## 3. Deploy хийх
 
-`main` руу push хийхэд автоматаар явна. Гараар ажиллуулах бол **Actions → Deploy to huyagtan.mn → Run workflow**.
+`main` руу push хийхэд автоматаар явна. Гараар: **Actions → Deploy to huyagtan.mn → Run workflow**.
 
 ## Орчны хувьсагч (Supabase г.м.)
 
 Сервер дээр `/var/www/huyagtan.mn/.env` файлд бичээд `sudo systemctl restart huyagtan` хийнэ.
-`NEXT_PUBLIC_*` хувьсагчууд build үед хэрэгтэй тул тэдгээрийг GitHub Secrets-д нэмж workflow-ийн Build алхамд дамжуулна.
+`NEXT_PUBLIC_*` хувьсагчууд build үед хэрэгтэй тул GitHub Secrets-д нэмж workflow-ийн Build алхамд дамжуулна.
 
 ## Асуудал гарвал
 
@@ -51,4 +48,5 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 sudo systemctl status huyagtan
 sudo journalctl -u huyagtan -n 100
 sudo nginx -t
+sudo /home/deploy/actions-runner/svc.sh status
 ```
