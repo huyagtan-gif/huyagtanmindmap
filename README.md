@@ -1,8 +1,63 @@
-# Huyagtan Mindmap
+# Хуягтан Mind Map
 
-Next.js апп, https://huyagtan.mn дээр ажиллана. Deploy-ийн тохиргоо: [deploy/README.md](deploy/README.md).
+Хуягтан өргөөний бүртгэл, онгодын mind map. https://huyagtan.mn дээр ажиллана.
+Шаардлага: «Хуягтан Mind Map систем: Шаардлага v2.0». Энэ репо Phase 1 (MVP)-ээс Phase 5 хүртэлх бүх үе шатыг агуулна:
+үйл ажиллагаа, сургалт, QR ирц, нийтийн бүртгэл (Phase 3), QPay төлбөр, хандив, санхүүгийн тайлан (Phase 4),
+сертификат, PWA, push мэдэгдэл, англи хэл, сервер өргөтгөх заавар (Phase 5).
+
+## Технологи
+
+- Next.js 15 (App Router, standalone) + TypeScript, нэг процесс
+- PostgreSQL 16: SQL миграци (`migrations/`), RLS (өргөөгөөр тусгаарлалт), audit trigger
+- Auth.js: имэйлийн нэг удаагийн холбоос + Google (сешн DB-д); SMS код (гарц тохируулсан үед)
+- Realtime: PostgreSQL LISTEN/NOTIFY → SSE. Сувгаар зөвхөн дохио явна, өгөгдөл явахгүй
+- UI: prototype-ийн design system (`app/globals.css`)
+
+## Бүтэц
+
+| Зам | Агуулга |
+|---|---|
+| `migrations/*.sql` | Схем, RLS, trigger, анхдагч өгөгдөл |
+| `lib/db.ts` | `withCtx` (хүсэлт бүр `huyagtan_app` role + `app.urguu_id`), `sys` (системийн) |
+| `lib/viewer.ts` | Нэвтэрсэн хүн, өргөө, түвшин, эрх; «Түвшнээр харах» |
+| `lib/project.ts` | **Талбарын шүүлт нэг газар**: `projectPerson(person, viewer)` |
+| `lib/import.ts`, `lib/norm.ts` | Google Sheet импорт, нэр/онгод тулгах |
+| `lib/realtime.ts`, `app/api/events` | Realtime дохио (P2.1) |
+| `lib/outbox.ts`, `lib/worker.ts` | Мэдэгдлийн дараалал, дахин оролдлого (P2.7) |
+| `lib/sms.ts`, `lib/otp.ts`, `lib/captcha.ts` | SMS код, captcha (P2.3) |
+| `lib/urguu.ts` | Өргөө үүсгэх/хуулах, өргөө хоорондын эрх, «Дэлхийн үрс» (P2.4, P2.5) |
+| `lib/privacy.ts`, `lib/xlsx.ts`, `components/mapExport.ts` | Өгөгдлөө татах/устгуулах, Excel, PNG/PDF экспорт (P2.6, P2.8) |
+| `lib/errors.ts`, `instrumentation.ts` | Алдааны хяналт (P2.9) |
+| `lib/events.ts`, `lib/training.ts`, `lib/public.ts` | Үйл, сургалт, хүлээлгийн жагсаалт, QR ирц, зочны бүртгэл (Phase 3) |
+| `lib/reminders.ts` | 24 цагийн өмнөх сануулга (P3.9) |
+| `lib/qpay.ts`, `lib/payments.ts`, `lib/finance.ts`, `lib/secret.ts` | QPay, төлбөр, тулгалт, санхүүгийн тайлан, нууц үг шифрлэлт (Phase 4) |
+| `app/certificate/`, `migrations/010_phase5.sql` | Сертификат: дугаарлалт, нийтийн шалгах хуудас (Phase 5) |
+| `lib/push.ts`, `public/sw.js`, `app/manifest.ts` | PWA, Web Push (VAPID, агуулгагүй дохио) (Phase 5) |
+| `lib/i18n*.ts`, `components/LangSwitch.tsx` | Олон хэл: монгол мөр = түлхүүр, англи толь (D13) |
+| `app/t/`, `app/e/`, `app/a/` | Нийтийн сургалтын бүртгэл, хандив, QR ирцийн хуудас (нэвтрэлтгүй) |
+| `app/(app)/` | Mind map, Хүмүүс, Миний мэдээлэл, Админ самбар |
+| `app/actions/` | Server actions (бүх бичих үйлдэл, эрх шалгалттай) |
+| `deploy/` | Серверийн тохиргоо, нөөцлөлт: [deploy/README.md](deploy/README.md) |
+
+## Локал дээр ажиллуулах
 
 ```bash
+createdb huyagtan_dev                       # PostgreSQL 16
+cp .env.example .env.local                  # DATABASE_URL, AUTH_SECRET, SUPER_ADMIN_EMAIL-ийг бөглөнө
 npm install
+npm run migrate                             # DATABASE_URL=... шаардана
 npm run dev
 ```
+
+`EMAIL_SERVER` хоосон үед нэвтрэх холбоос терминалд (`[mail:dev] ... link=`) хэвлэгдэнэ.
+Төлбөрийг жинхэнэ QPay-гүйгээр турших бол `.env.local`-д `QPAY_MOCK=1`, `APP_ENV=local`.
+Push турших бол `node scripts/vapid.mjs`-ийн гаралтыг `.env.local`-д нэмнэ (push зөвхөн localhost эсвэл HTTPS дээр ажиллана).
+
+## Тест
+
+```bash
+npm test                                                             # нэгж тест
+TEST_DATABASE_URL=postgres://.../huyagtan_test npm test              # + RLS, audit, импорт (хоосон сан дээр)
+```
+
+Хувийн мэдээлэлтэй файл (Google Sheet-ийн экспорт г.м.) энэ репод **орохгүй**. Импортыг апп дотроос хийнэ.

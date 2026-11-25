@@ -1,17 +1,37 @@
 name: Deploy to huyagtan.mn
 
+# main → үндсэн сайт (huyagtan.mn). staging салбар, эсвэл гараар «Deploy to: staging» → туршилтын орчин (staging.huyagtan.mn, P2.9).
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
+  pull_request:
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy to"
+        type: choice
+        options: [production, staging]
+        default: production
+
+env:
+  TARGET: ${{ inputs.target || (github.ref_name == 'staging' && 'staging') || 'production' }}
 
 concurrency:
-  group: deploy-production
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.ref) || format('deploy-{0}', inputs.target || (github.ref_name == 'staging' && 'staging') || 'production') }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: huyagtan_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +43,15 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Typecheck
+        run: npm run typecheck
+
+      # N10: эрх / талбарын шүүлт, RLS, импортын тест. Унавал deploy хийгдэхгүй.
+      - name: Test
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/huyagtan_test
+        run: npm test
+
       - name: Build
         env:
           NEXT_PUBLIC_BUILD_SHA: ${{ github.sha }}
@@ -33,9 +62,11 @@ jobs:
           cp -r public .next/standalone/public
           mkdir -p .next/standalone/.next
           cp -r .next/static .next/standalone/.next/static
+          cp -r migrations scripts .next/standalone/
           tar -C .next/standalone -czf app.tgz .
 
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           name: app
           path: app.tgz
@@ -44,25 +75,51 @@ jobs:
   # Runs on the VPS itself (self-hosted runner, see deploy/setup-runner.sh).
   # The runner only makes outbound connections to GitHub, so no inbound SSH is needed.
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: [self-hosted, huyagtan]
-    environment: production
+    environment: ${{ inputs.target || (github.ref_name == 'staging' && 'staging') || 'production' }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: app
 
-      - name: Install release and restart
+      - name: Install release, migrate and restart
         run: |
           set -e
-          RELEASE="/var/www/huyagtan.mn/releases/${GITHUB_SHA}"
+          if [ "$TARGET" = staging ]; then
+            APP=/var/www/staging.huyagtan.mn; SERVICE=huyagtan-staging; PORT=3001; SETUP=setup-staging.sh
+          else
+            APP=/var/www/huyagtan.mn; SERVICE=huyagtan; PORT=3000; SETUP=setup-db.sh
+          fi
+          echo "Deploy: $TARGET → $APP ($SERVICE, порт $PORT)"
+          RELEASE="$APP/releases/${GITHUB_SHA}"
+          PREV=$(readlink -f "$APP/current" 2>/dev/null || true)
           rm -rf "$RELEASE" && mkdir -p "$RELEASE"
           tar -xzf app.tgz -C "$RELEASE"
-          ln -sfn "$RELEASE" /var/www/huyagtan.mn/current
-          sudo /usr/bin/systemctl restart huyagtan
-          for i in $(seq 1 15); do
-            curl -fsS -o /dev/null http://127.0.0.1:3000/ && { echo "App is up"; break; }
+
+          # Миграци: амжилтгүй бол хуучин хувилбар хэвээр ажиллана (current солигдохгүй).
+          DATABASE_URL=$(grep -E '^DATABASE_URL=' "$APP/.env" 2>/dev/null | head -1 | cut -d= -f2- || true)
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::$APP/.env-д DATABASE_URL алга. Сервер дээр эхлээд 'sudo bash $SETUP <имэйл>' ажиллуулна уу (deploy/README.md)."
+            exit 1
+          fi
+          (cd "$RELEASE" && DATABASE_URL="$DATABASE_URL" node scripts/migrate.mjs)
+
+          ln -sfn "$RELEASE" "$APP/current"
+          sudo /usr/bin/systemctl restart "$SERVICE"
+          for i in $(seq 1 20); do
+            curl -fsS -o /dev/null "http://127.0.0.1:$PORT/api/health" && { echo "App is up"; break; }
             sleep 1
-            [ "$i" = 15 ] && { sudo /usr/bin/journalctl -u huyagtan -n 50 --no-pager; exit 1; }
+            if [ "$i" = 20 ]; then
+              sudo /usr/bin/journalctl -u "$SERVICE" -n 50 --no-pager || true
+              # N8: шинэ хувилбар асахгүй бол өмнөх рүү буцна.
+              if [ -n "$PREV" ] && [ -d "$PREV" ]; then
+                ln -sfn "$PREV" "$APP/current"
+                sudo /usr/bin/systemctl restart "$SERVICE"
+                echo "::error::Шинэ хувилбар ассангүй. Өмнөх хувилбар руу буцаалаа."
+              fi
+              exit 1
+            fi
           done
-          cd /var/www/huyagtan.mn/releases && ls -1t | tail -n +4 | xargs -r rm -rf
+          cd "$APP/releases" && ls -1t | tail -n +4 | xargs -r rm -rf
