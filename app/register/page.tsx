@@ -2,6 +2,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AuthFrame } from "@/components/AuthFrame";
 import { register } from "@/app/actions/auth";
+import { Captcha } from "@/components/Captcha";
+import { captchaSiteKey } from "@/lib/captcha";
 import { getViewer } from "@/lib/viewer";
 
 export const metadata = { title: "Бүртгүүлэх" };
@@ -13,6 +15,7 @@ const ERR: Record<string, string> = {
   phone: "Утасны дугаараа оруулна уу.",
   email: "Имэйл хаягаа зөв оруулна уу.",
   rate: "Хэт олон оролдлого хийлээ. 15 минутын дараа дахин оролдоно уу.",
+  captcha: "Робот биш гэдгээ баталгаажуулна уу.",
 };
 
 export default async function Register({ searchParams }: { searchParams: Promise<{ e?: string }> }) {
@@ -42,6 +45,7 @@ export default async function Register({ searchParams }: { searchParams: Promise
             Миний хувийн мэдээллийг <Link href="/privacy" target="_blank">Нууцлалын бодлого</Link>-ын дагуу цуглуулж, боловсруулахыг зөвшөөрч байна.
           </span>
         </label>
+        <Captcha siteKey={captchaSiteKey()} />
         <button className="btn pri lg" type="submit">Хүсэлт илгээх</button>
       </form>
       {v ? null : <span className="small muted">Бүртгэлтэй юу? <Link href="/login">Нэвтрэх</Link></span>}

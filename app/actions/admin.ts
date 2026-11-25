@@ -68,8 +68,8 @@ export async function sendInvite(fd: FormData) {
   const ok = await sendMail({
     to: email, template: "invite", subject: `Хуягтан: ${v.urguu.name}-ийн урилга`, title: `${v.urguu.name} таныг урьж байна`,
     body: `Таныг «${escHtml(role!.name)}» түвшнээр урилаа. Урилга 7 хоног хүчинтэй, нэг удаа ашиглагдана.`,
-    cta: { label: "Урилгыг нээх", url: `${SITE_URL}/invite/${token}` },
-  });
+    cta: { label: "Урилгыг нээх", url: `${SITE_URL}/invite/${token}` }, urguuId: v.urguu.id,
+  }, { transient: true }); // нууц токентой тул агуулга outbox-д хадгалагдахгүй
   done("/admin/approvals", ok ? `Урилга илгээгдлээ: ${email}` : "Урилга үүссэн ч имэйл илгээж чадсангүй. Имэйлийн тохиргоог шалгана уу");
 }
 

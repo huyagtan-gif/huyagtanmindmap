@@ -33,6 +33,9 @@ const I: Record<string, ReactNode> = {
   edit: <path d="M4 20h4L19 9l-4-4L4 16z" />,
   share: <path d="M12 15V3M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" />,
   out: <path d="M9 4H5v16h4M14 8l4 4-4 4M18 12H9" />,
+  sys: <><rect x="3" y="4" width="18" height="7" rx="2" /><rect x="3" y="13" width="18" height="7" rx="2" /><path d="M7 7.5h.01M7 16.5h.01" /></>,
+  globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.300 6.400-3.800 9c-2.500-2.600-3.800-5.600-3.800-9S9.500 5.600 12 3z" /></>,
+  down2: <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />,
 };
 
 export function Icon({ n, s = 20, w = 2 }: { n: string; s?: number; w?: number }) {

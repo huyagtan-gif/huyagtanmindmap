@@ -1,5 +1,5 @@
 import nodemailer from "nodemailer";
-import { sys } from "./db";
+import { deliverNow, enqueue, record } from "./outbox";
 
 const FROM = process.env.EMAIL_FROM || "Хуягтан <no-reply@huyagtan.mn>";
 export const SITE_URL = (process.env.AUTH_URL || process.env.NEXTAUTH_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -21,28 +21,36 @@ function layout(title: string, body: string, cta?: { label: string; url: string 
   <p style="font-size:12px;color:#8A94A3;margin-top:32px">Хуягтан · huyagtan.mn</p></div>`;
 }
 
-export type Mail = { to: string; subject: string; title: string; body: string; cta?: { label: string; url: string }; template: string };
+export type Mail = { to: string; subject: string; title: string; body: string; cta?: { label: string; url: string }; template: string; urguuId?: string | null };
+export type MailContent = Pick<Mail, "subject" | "title" | "body" | "cta">;
 
-/** Имэйл илгээж, notification_outbox-д бүртгэнэ. EMAIL_SERVER тохируулаагүй бол (хөгжүүлэлт) консолд хэвлэнэ. */
-export async function sendMail(m: Mail): Promise<boolean> {
+/** Имэйлийг бодитоор илгээнэ (алдаа гарвал throw). EMAIL_SERVER тохируулаагүй бол (хөгжүүлэлт) консолд хэвлэнэ. */
+export async function deliverMail(to: string, m: MailContent): Promise<void> {
   const t = getTransport();
   const text = `${m.title}\n\n${m.body.replace(/<[^>]+>/g, "")}${m.cta ? `\n\n${m.cta.label}: ${m.cta.url}` : ""}`;
-  let ok = true;
-  let err: string | null = null;
-  try {
-    if (t) await t.sendMail({ from: FROM, to: m.to, subject: m.subject, text, html: layout(m.title, m.body, m.cta) });
-    else console.log(`[mail:dev] to=${m.to} subject="${m.subject}"${m.cta ? ` link=${m.cta.url}` : ""}`);
-  } catch (e) {
-    ok = false;
-    err = e instanceof Error ? e.message : String(e);
-    console.error("[mail] илгээж чадсангүй:", err);
+  if (t) await t.sendMail({ from: FROM, to, subject: m.subject, text, html: layout(m.title, m.body, m.cta) });
+  else console.log(`[mail:dev] to=${to} subject="${m.subject}"${m.cta ? ` link=${m.cta.url}` : ""}`);
+}
+
+/**
+ * Имэйл илгээнэ. Буцаах утга: яг одоо илгээгдсэн эсэх.
+ *  - transient (нэвтрэх холбоос, урилга зэрэг нууц токентой): шууд илгээнэ, агуулга outbox-д ХАДГАЛАГДАХГҮЙ, дахин оролдохгүй.
+ *  - бусад: outbox-д дараалалд орж шууд нэг оролдоно; амжилтгүй бол ажилчин дахин оролдоно (P2.7).
+ */
+export async function sendMail(m: Mail, opts: { transient?: boolean } = {}): Promise<boolean> {
+  if (opts.transient) {
+    let err: string | null = null;
+    try {
+      await deliverMail(m.to, m);
+    } catch (e) {
+      err = e instanceof Error ? e.message : String(e);
+      console.error("[mail] илгээж чадсангүй:", err);
+    }
+    await record("email", m.to, m.template, { subject: m.subject }, err, m.urguuId);
+    return !err;
   }
-  // Нэвтрэх холбоос (токен) outbox-д хадгалагдахгүй.
-  await sys(
-    "INSERT INTO notification_outbox (channel, recipient, template, payload, state, attempts, last_error, sent_at) VALUES ('email',$1,$2,$3,$4,1,$5,$6)",
-    [m.to, m.template, JSON.stringify({ subject: m.subject }), ok ? "sent" : "failed", err, ok ? new Date() : null],
-  ).catch(() => {});
-  return ok;
+  const id = await enqueue("email", m.to, m.template, { subject: m.subject, title: m.title, body: m.body, cta: m.cta }, m.urguuId);
+  return id ? deliverNow(id) : false;
 }
 
 export { esc as escHtml };

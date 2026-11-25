@@ -178,6 +178,13 @@ export async function requirePerm(...keys: PermKey[]): Promise<Member> {
   return v;
 }
 
+/** Платформын супер админ (өргөөнөөс үл хамаарах системийн удирдлага). «Түвшнээр харах» үед хүчингүй. */
+export async function requirePlatformAdmin(): Promise<Member> {
+  const v = await requireMember();
+  if (!v.isPlatformAdmin || v.viewAs) redirect("/map");
+  return v;
+}
+
 export const can = (v: Viewer, k: PermKey) => v.perms.has(k);
 export const ctxOf = (v: Viewer): DbCtx => ({ userId: v.userId, personId: v.personId, urguuId: v.urguu?.id ?? null });
 /** Үзэгчийн контекстоор (RLS-тэй) DB транзакц. */

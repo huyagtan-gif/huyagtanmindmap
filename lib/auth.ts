@@ -3,7 +3,11 @@ import Google from "next-auth/providers/google";
 import Nodemailer from "next-auth/providers/nodemailer";
 import PostgresAdapter from "@auth/pg-adapter";
 import { pool } from "./db";
-import { sendMail } from "./mail";
+import { sendMail, SITE_URL } from "./mail";
+
+export const SESSION_MAX_AGE = 30 * 24 * 3600;
+/** Cookie-ний нэр (__Secure- угтвар) lib/session.ts-тэй таарах ёстой тул тодорхой зааж өгнө. */
+export const secureCookies = SITE_URL.startsWith("https://");
 
 const providers: any[] = [
   Nodemailer({
@@ -20,7 +24,7 @@ const providers: any[] = [
         title: "Нэвтрэх холбоос",
         body: "Доорх товчийг дарж Хуягтан системд нэвтэрнэ үү. Холбоос 30 минут хүчинтэй, нэг удаа ашиглагдана. Хэрэв та хүсээгүй бол энэ имэйлийг үл тоомсорлоно уу.",
         cta: { label: "Нэвтрэх", url },
-      });
+      }, { transient: true });
       if (!ok) throw new Error("Имэйл илгээж чадсангүй");
     },
   }),
@@ -33,8 +37,9 @@ export const googleEnabled = providers.length > 1;
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PostgresAdapter(pool),
-  session: { strategy: "database", maxAge: 30 * 24 * 3600 },
+  session: { strategy: "database", maxAge: SESSION_MAX_AGE },
   trustHost: true,
+  useSecureCookies: secureCookies,
   providers,
   pages: { signIn: "/login", verifyRequest: "/login/check", error: "/login" },
   callbacks: {

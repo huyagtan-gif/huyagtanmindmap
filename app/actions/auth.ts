@@ -6,6 +6,10 @@ import { sys, sysTx } from "@/lib/db";
 import { rateLimit } from "@/lib/ratelimit";
 import { getViewer } from "@/lib/viewer";
 import { capFirst, capWords, normPhone } from "@/lib/norm";
+import { verifyCaptcha } from "@/lib/captcha";
+import { checkOtp, issueOtp } from "@/lib/otp";
+import { createSession } from "@/lib/session";
+import { smsMode } from "@/lib/sms";
 
 const CONSENT_VERSION = "2026-11";
 
@@ -31,7 +35,9 @@ export async function loginEmail(fd: FormData) {
   const email = String(fd.get("email") || "").trim().toLowerCase();
   const next = safeNext(fd.get("next"));
   if (!isEmail(email)) redirect(`/login?e=email&next=${encodeURIComponent(next)}`);
-  if (!rateLimit(`login:ip:${await clientIp()}`, 10) || !rateLimit(`login:${email}`, 5)) redirect("/login?e=rate");
+  const ip = await clientIp();
+  if (!rateLimit(`login:ip:${ip}`, 10) || !rateLimit(`login:${email}`, 5)) redirect("/login?e=rate");
+  if (!(await verifyCaptcha(fd, ip))) redirect(`/login?e=captcha&next=${encodeURIComponent(next)}`);
   await sendLink(email, next);
 }
 
@@ -57,7 +63,9 @@ export async function register(fd: FormData) {
   if (!given || given.length > 80 || father.length > 80) back("name");
   if (!phone.value) back("phone");
   if (!isEmail(email)) back("email");
-  if (!rateLimit(`reg:ip:${await clientIp()}`, 5) || !rateLimit(`reg:${email}`, 5)) back("rate");
+  const ip = await clientIp();
+  if (!rateLimit(`reg:ip:${ip}`, 5) || !rateLimit(`reg:${email}`, 5)) back("rate");
+  if (!(await verifyCaptcha(fd, ip))) back("captcha");
 
   const [exists] = await sys("SELECT 1 FROM person_private WHERE lower(email) = $1", [email]);
   if (!exists) {
@@ -128,3 +136,72 @@ export async function acceptInvite(fd: FormData) {
   redirect(ok ? "/" : `/invite/${token}?e=1`);
 }
 
+
+/* ---------- P2.3 SMS кодоор нэвтрэх ---------- */
+
+/** Утасны дугаар руу нэг удаагийн код илгээнэ. Дугаар бүртгэлтэй эсэхийг хариугаар ялгахгүй (тоочихоос сэргийлнэ). */
+export async function loginSmsRequest(fd: FormData) {
+  const next = safeNext(fd.get("next"));
+  if (smsMode() === "off") redirect("/login");
+  const phone = normPhone(String(fd.get("phone") || ""));
+  if (!phone.value || !phone.ok) redirect(`/login?e=phone&next=${encodeURIComponent(next)}`);
+  const ip = await clientIp();
+  if (!rateLimit(`sms:ip:${ip}`, 5) || !rateLimit(`sms:${phone.value}`, 3)) redirect("/login?e=rate");
+  if (!(await verifyCaptcha(fd, ip))) redirect(`/login?e=captcha&next=${encodeURIComponent(next)}`);
+  // Зөвхөн баталгаажсан утастай, нэвтрэх хэрэглэгчтэй хүнд код явна.
+  const [u] = await sys<{ person_id: string }>(
+    "SELECT pp.person_id FROM person_private pp JOIN users u ON u.person_id = pp.person_id JOIN person p ON p.id = pp.person_id WHERE pp.phone = $1 AND pp.phone_verified AND p.merged_into_id IS NULL",
+    [phone.value],
+  );
+  if (u) await issueOtp(phone.value, "login", u.person_id);
+  redirect(`/login/sms?phone=${encodeURIComponent(phone.value)}&next=${encodeURIComponent(next)}`);
+}
+
+export async function loginSmsVerify(fd: FormData) {
+  const next = safeNext(fd.get("next"));
+  const phone = normPhone(String(fd.get("phone") || "")).value;
+  const code = String(fd.get("code") || "").replace(/\s/g, "");
+  const back = (e: string): never => redirect(`/login/sms?phone=${encodeURIComponent(phone)}&next=${encodeURIComponent(next)}&e=${e}`);
+  if (!rateLimit(`smsv:ip:${await clientIp()}`, 15) || !rateLimit(`smsv:${phone}`, 8)) back("rate");
+  const r = await checkOtp(phone, "login", code);
+  if (!r.ok || !r.personId) back("code");
+  const [u] = await sys<{ id: number }>(
+    "SELECT u.id FROM users u JOIN person_private pp ON pp.person_id = u.person_id WHERE u.person_id = $1 AND pp.phone = $2 AND pp.phone_verified",
+    [r.personId, phone],
+  );
+  if (!u) back("code");
+  await createSession(u.id);
+  redirect(next);
+}
+
+/* ---------- P2.3 Утас баталгаажуулах (нэвтэрсэн хэрэглэгч өөрийн утсыг) ---------- */
+
+export async function requestPhoneVerify() {
+  const v = await getViewer();
+  if (!v?.personId) redirect("/login");
+  if (smsMode() === "off") redirect("/me");
+  const [pp] = await sys<{ phone: string | null; phone_verified: boolean }>("SELECT phone, phone_verified FROM person_private WHERE person_id = $1", [v.personId]);
+  if (!pp?.phone) redirect("/me?pv=nophone#account");
+  if (pp.phone_verified) redirect("/me#account");
+  if (!normPhone(pp.phone).ok) redirect("/me?pv=format#account");
+  if (!rateLimit(`pv:${v.personId}`, 3) || !rateLimit(`pv:ip:${await clientIp()}`, 6)) redirect("/me?pv=rate#account");
+  const r = await issueOtp(pp.phone, "verify", v.personId);
+  redirect(`/me?pv=${r === "sent" ? "sent" : r}#account`);
+}
+
+export async function confirmPhoneVerify(fd: FormData) {
+  const v = await getViewer();
+  if (!v?.personId) redirect("/login");
+  const [pp] = await sys<{ phone: string | null }>("SELECT phone FROM person_private WHERE person_id = $1", [v.personId]);
+  if (!pp?.phone) redirect("/me#account");
+  if (!rateLimit(`pvc:${v.personId}`, 10)) redirect("/me?pv=rate#account");
+  const r = await checkOtp(pp.phone, "verify", String(fd.get("code") || "").replace(/\s/g, ""));
+  if (!r.ok || r.personId !== v.personId) redirect("/me?pv=code#account");
+  try {
+    await sysTx({ userId: v.userId, personId: v.personId }, (q) => q("UPDATE person_private SET phone_verified = true WHERE person_id = $1 AND phone = $2", [v.personId, pp.phone]));
+  } catch (e: any) {
+    if (e?.code === "23505") redirect("/me?pv=taken#account");
+    throw e;
+  }
+  redirect("/me?pv=ok#account");
+}

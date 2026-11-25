@@ -110,4 +110,121 @@ d("өгөгдлийн сан: миграци, RLS, audit, импорт", () => {
     const adminList = await db.withCtx(ctx, (q) => loadPeople(q, { personId: admin, fields: new Set(["phone", "email", "facebook"]) }));
     expect(JSON.stringify(adminList)).toContain("anhaa@example.com");
   });
+
+  /* ---------- Phase 2 ---------- */
+
+  it("realtime: NOTIFY-д зөвхөн {entity, id, urguu_id} явна, өгөгдөл явахгүй (P2.1, A3)", async () => {
+    const pg = await import("pg");
+    const c = new pg.default.Client({ connectionString: URL });
+    await c.connect();
+    const got: any[] = [];
+    c.on("notification", (m) => got.push(JSON.parse(m.payload || "{}")));
+    await c.query("LISTEN huyagtan");
+    const pid = await db.withCtx({ personId: admin, urguuId: A }, async (q) => {
+      const [p] = await q("INSERT INTO person (given_name, created_urguu_id) VALUES ('Дохио-тест', $1) RETURNING id", [A]);
+      await q("INSERT INTO person_private (person_id, phone, email) VALUES ($1, '+97688887777', 'signal-secret@example.com')", [p.id]);
+      return p.id;
+    });
+    await db.sys("UPDATE ongod SET note = 'x' WHERE id = $1", [ongodB]);
+    await new Promise((r) => setTimeout(r, 300));
+    await c.end();
+    const mine = got.filter((g) => g.id === pid);
+    expect(mine.map((g) => g.entity).sort()).toEqual(["person", "person_private"]);
+    for (const g of got) expect(Object.keys(g).sort()).toEqual(["entity", "id", "urguu_id"]);
+    expect(mine.every((g) => g.urguu_id === A)).toBe(true);
+    expect(got.find((g) => g.id === ongodB)).toMatchObject({ entity: "ongod", urguu_id: B });
+    expect(JSON.stringify(got)).not.toMatch(/Дохио-тест|8888|signal-secret/);
+  });
+
+  it("харагдацын эрх: зургаан харагдац түвшин бүрт seed болсон (P2.2)", async () => {
+    const rows = await db.sys("SELECT r.name, count(*)::int AS n FROM role r JOIN role_view rv ON rv.role_id = r.id WHERE r.urguu_id = $1 GROUP BY r.name", [A]);
+    expect(rows).toHaveLength(4);
+    expect(rows.every((r) => r.n === 6)).toBe(true);
+  });
+
+  it("outbox: амжилтгүй илгээлт дараалалд үлдэж дахин оролдогдоно, апп-ын role уншихгүй (P2.7)", async () => {
+    const { sendMail } = await import("@/lib/mail");
+    const { processOutbox, MAX_ATTEMPTS, backoffMinutes } = await import("@/lib/outbox");
+    expect([1, 2, 3, 4, 5].map(backoffMinutes)).toEqual([1, 5, 30, 120, 120]);
+    const mail = { to: "queue-test@example.com", template: "membership_approved", subject: "Сэдэв", title: "Гарчиг", body: "Бие" };
+    const errSpy = (await import("vitest")).vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = (await import("vitest")).vi.spyOn(console, "log").mockImplementation(() => {});
+    process.env.EMAIL_SERVER = "smtp://127.0.0.1:1"; // холбогдохгүй хаяг
+    expect(await sendMail(mail)).toBe(false);
+    let [r] = await db.sys("SELECT id, state, attempts, last_error, payload, next_attempt_at > now() AS later FROM notification_outbox WHERE recipient = $1", [mail.to]);
+    expect(r).toMatchObject({ state: "queued", attempts: 1, later: true });
+    expect(r.last_error).toBeTruthy();
+    expect(r.payload.body).toBe("Бие");
+    // Хугацаа болоогүй мөрийг ажилчин авахгүй
+    expect(await processOutbox()).toEqual({ sent: 0, failed: 0 });
+    // Хугацаа болмогц дахин оролдоно; гарц сэргэсэн бол илгээгдэнэ, агуулга цэвэрлэгдэнэ
+    delete process.env.EMAIL_SERVER;
+    await db.sys("UPDATE notification_outbox SET next_attempt_at = now() - interval '1 second' WHERE id = $1", [r.id]);
+    expect(await processOutbox()).toEqual({ sent: 1, failed: 0 });
+    [r] = await db.sys("SELECT state, attempts, payload, sent_at FROM notification_outbox WHERE id = $1", [r.id]);
+    expect(r).toMatchObject({ state: "sent", attempts: 2, payload: { subject: "Сэдэв" } });
+    expect(r.sent_at).toBeTruthy();
+    // Оролдлого дуусвал failed болно
+    process.env.EMAIL_SERVER = "smtp://127.0.0.1:1";
+    await sendMail({ ...mail, to: "dead-test@example.com" });
+    await db.sys("UPDATE notification_outbox SET attempts = $1, next_attempt_at = now() WHERE recipient = 'dead-test@example.com'", [MAX_ATTEMPTS - 1]);
+    await processOutbox();
+    const [d] = await db.sys("SELECT state, attempts FROM notification_outbox WHERE recipient = 'dead-test@example.com'");
+    expect(d).toMatchObject({ state: "failed", attempts: MAX_ATTEMPTS });
+    // Нууц токентой (transient) имэйлийн агуулга хадгалагдахгүй
+    delete process.env.EMAIL_SERVER;
+    await sendMail({ ...mail, to: "link-test@example.com", template: "magic_link", cta: { label: "Нэвтрэх", url: "https://x.test/?token=SECRET-TOKEN" } }, { transient: true });
+    const [t] = await db.sys("SELECT state, payload::text AS p FROM notification_outbox WHERE recipient = 'link-test@example.com'");
+    expect(t.state).toBe("sent");
+    expect(t.p).not.toContain("SECRET-TOKEN");
+    errSpy.mockRestore();
+    logSpy.mockRestore();
+    await expect(db.withCtx({ personId: admin, urguuId: A }, (q) => q("SELECT * FROM notification_outbox"))).rejects.toThrow(/permission denied/);
+  });
+
+  it("SMS код: hash-аар хадгалагдана, нэг удаа, 5 оролдлого, хязгаартай (P2.3)", async () => {
+    const { vi } = await import("vitest");
+    const { issueOtp, checkOtp } = await import("@/lib/otp");
+    process.env.SMS_DEV_LOG = "1";
+    const phone = "+97690001111";
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((m: string) => void logs.push(String(m)));
+    const code = async () => {
+      expect(await issueOtp(phone, "login", admin)).toBe("sent");
+      return logs[logs.length - 1].match(/код (\d{6})/)![1];
+    };
+    const c1 = await code();
+    const stored = await db.sys("SELECT code_hash FROM phone_otp WHERE phone = $1", [phone]);
+    expect(stored[0].code_hash).toHaveLength(64);
+    expect(stored[0].code_hash).not.toContain(c1);
+    expect(JSON.stringify(await db.sys("SELECT payload FROM notification_outbox WHERE recipient = $1", [phone]))).not.toContain(c1);
+    const wrong = c1 === "000000" ? "111111" : "000000";
+    expect((await checkOtp(phone, "login", wrong)).ok).toBe(false);
+    expect((await checkOtp(phone, "verify", c1)).ok).toBe(false); // өөр зориулалтаар ашиглагдахгүй
+    expect(await checkOtp(phone, "login", c1)).toEqual({ ok: true, personId: admin });
+    expect((await checkOtp(phone, "login", c1)).ok).toBe(false); // нэг удаа
+    // Шинэ код өмнөхийг хүчингүй болгоно; 5 буруу оролдлогын дараа зөв код ч хүчингүй
+    const c2 = await code();
+    const c3 = await code();
+    expect((await checkOtp(phone, "login", c2)).ok).toBe(c2 === c3);
+    const c4 = await code();
+    const bad = c4 === "000000" ? "111111" : "000000";
+    for (let i = 0; i < 5; i++) expect((await checkOtp(phone, "login", bad)).ok).toBe(false);
+    expect((await checkOtp(phone, "login", c4)).ok).toBe(false);
+    // 15 минутад нэг дугаарт 5-аас илүү код явахгүй
+    await issueOtp(phone, "login", admin);
+    expect(await issueOtp(phone, "login", admin)).toBe("rate");
+    spy.mockRestore();
+    await expect(db.withCtx({ personId: admin, urguuId: A }, (q) => q("SELECT * FROM phone_otp"))).rejects.toThrow(/permission denied/);
+  });
+
+  it("утас солигдвол баталгаажуулалт хүчингүй болно; баталгаажсан утас давхардахгүй (P2.3)", async () => {
+    const [p1] = await db.sys("INSERT INTO person (given_name, created_urguu_id) VALUES ('Утас-1', $1) RETURNING id", [A]);
+    const [p2] = await db.sys("INSERT INTO person (given_name, created_urguu_id) VALUES ('Утас-2', $1) RETURNING id", [A]);
+    await db.sys("INSERT INTO person_private (person_id, phone, phone_verified) VALUES ($1, '+97690002222', true), ($2, '+97690002222', false)", [p1.id, p2.id]);
+    await expect(db.sys("UPDATE person_private SET phone_verified = true WHERE person_id = $1", [p2.id])).rejects.toThrow(/person_private_phone_verified_uq/);
+    await db.sys("UPDATE person_private SET phone = '+97690003333' WHERE person_id = $1", [p1.id]);
+    const [r] = await db.sys("SELECT phone_verified FROM person_private WHERE person_id = $1", [p1.id]);
+    expect(r.phone_verified).toBe(false);
+  });
 });
