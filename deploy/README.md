@@ -85,6 +85,71 @@ EMAIL_FROM="Хуягтан <no-reply@huyagtan.mn>"
 3. **Импорт, нэгтгэл** → CSV-г оруулна → «Хянах зүйлс»-ийг нэг бүрчлэн шийдвэрлэнэ.
    Файл серверт хадгалагдахгүй, git-д орохгүй. Ижил файл хоёр удаа орохгүй.
 
+## Phase 2: нэмэлт тохиргоо
+
+Phase 2-ын код `main` руу ороход хүснэгтүүд автоматаар шинэчлэгдэнэ. Сервер дээр заавал хийх шинэ алхам **байхгүй**;
+доорх бүгд сонголттой бөгөөд тохируулаагүй үед тухайн хэсэг дэлгэцэд харагдахгүй.
+
+### SMS (нэг удаагийн код)
+
+Гарцаа сонгосны дараа `/var/www/huyagtan.mn/.env`-д гарцын API-ийн дагуу нэмээд `sudo systemctl restart huyagtan`:
+
+```bash
+# GET-ээр илгээдэг гарц
+SMS_HTTP_URL="https://sms.example.mn/send?key=ТҮЛХҮҮР&from={from}&to={to}&text={text}"
+SMS_FROM=Huyagtan
+
+# эсвэл POST + JSON
+SMS_HTTP_URL=https://sms.example.mn/api/send
+SMS_HTTP_METHOD=POST
+SMS_HTTP_HEADERS={"authorization":"Bearer ТҮЛХҮҮР"}
+SMS_HTTP_BODY={"to":"{to}","text":"{text}","from":"{from}"}
+SMS_TO_FORMAT=local        # local = 99112233, e164 = +97699112233
+```
+
+Тохируулсны дараа «Миний мэдээлэл»-д утас баталгаажуулах, нэвтрэх хуудсанд «Утсаар нэвтрэх» гарч ирнэ.
+Код 6 оронтой, 5 минут хүчинтэй, нэг дугаарт 15 минутад 5-аас ихгүй илгээнэ.
+
+### Captcha (Cloudflare Turnstile, үнэгүй)
+
+[dash.cloudflare.com](https://dash.cloudflare.com) → Turnstile → Add site (`huyagtan.mn`) → хоёр түлхүүрийг `.env`-д:
+
+```bash
+TURNSTILE_SITE_KEY=...
+TURNSTILE_SECRET_KEY=...
+```
+
+### Алдааны хяналт
+
+- Серверийн болон хөтчийн алдаа **Систем → Алдаа, төлөв** хэсэгт бүртгэгдэнэ. Шинэ алдаа гарвал супер админд имэйл очно
+  (ижил алдаанд 24 цагт нэг удаа, цагт 5-аас ихгүй). Унтраах: `.env`-д `ERROR_ALERTS=off`.
+- Сайт бүхэлдээ унасныг мэдэхийн тулд [UptimeRobot](https://uptimerobot.com) (үнэгүй) дээр монитор нэмнэ:
+  Monitor type **Keyword**, URL `https://huyagtan.mn/api/health`, Keyword `"ok":true` (exists), 5 минут тутам, мэдэгдэл имэйлээр.
+
+### Туршилтын орчин: staging.huyagtan.mn
+
+Шинэ хувилбарыг жинхэнэ өгөгдөлд хүргэхээс өмнө ижил сервер дээр, **тусдаа сантай** орчинд туршина.
+
+1. Домэйны DNS-д `staging` нэртэй **A бичлэг** нэмж серверийн IP руу заана.
+2. VPS консолд:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/huyagtan-gif/huyagtanmindmap/main/deploy/setup-staging.sh -o setup-staging.sh
+sudo bash setup-staging.sh супер-админы@имэйл.mn
+```
+
+3. GitHub → **Actions → Deploy to huyagtan.mn → Run workflow** → Branch: турших салбар, **Deploy to: staging**.
+   (`staging` нэртэй салбар руу push хийхэд мөн автоматаар staging руу deploy болно.)
+
+Staging нь хоосон сангаар эхэлнэ: зөвхөн зохиомол өгөгдөл оруулна, жинхэнэ бүртгэлийг хуулахгүй. Имэйл тохируулаагүй тул нэвтрэх холбоос,
+SMS код логт бичигдэнэ: `sudo journalctl -u huyagtan-staging | grep -E 'mail:dev|sms:dev' | tail -3`.
+Сервер 1 GB RAM-тай тул ашиглаагүй үедээ унтрааж болно: `sudo systemctl stop huyagtan-staging` (дараагийн deploy дахин асаана).
+
+### Realtime (шууд шинэчлэгдэх)
+
+Нэмэлт тохиргоо шаардахгүй: апп `/api/events` хаягаар SSE холболт нээх ба Nginx-ийн одоогийн тохиргоогоор дамжина
+(хариу `X-Accel-Buffering: no` толгойтой, 25 секунд тутам дохио явуулдаг тул холболт тасрахгүй).
+
 ## Нөөцлөлт (шөнө бүр → Google Drive «Mindmap/backups»)
 
 Шөнө бүр 03:00 (Улаанбаатар)-д `pg_dump` → `age`-ээр шифрлэнэ → `rclone`-оор Drive руу хуулна, 30 хоногоос хуучныг устгана.
@@ -141,5 +206,6 @@ sudo journalctl -u huyagtan -n 100
 sudo nginx -t
 sudo /home/deploy/actions-runner/svc.sh status
 curl -s http://127.0.0.1:3000/api/health          # {"ok":true} бол апп ба сан хэвийн
+sudo systemctl status huyagtan-staging            # туршилтын орчин (порт 3001)
 sudo systemctl status postgresql
 ```

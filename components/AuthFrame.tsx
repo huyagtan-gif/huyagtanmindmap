@@ -7,6 +7,7 @@ export function AuthFrame({ title, sub, children, wide }: { title: string; sub?:
       <div className="authcard" style={wide ? { width: "min(560px,100%)" } : undefined}>
         <div className="brand" style={{ padding: 0 }}>
           <span className="logo" style={{ color: "#fff" }}><Icon n="map" s={18} /></span>Хуягтан
+          {process.env.APP_ENV === "staging" ? <span className="chip warn" style={{ marginLeft: 8 }}>туршилтын орчин</span> : null}
         </div>
         <div className="card col g16">
           <div className="col g4">

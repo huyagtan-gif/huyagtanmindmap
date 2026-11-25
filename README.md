@@ -1,13 +1,14 @@
 # Хуягтан Mind Map
 
 Хуягтан өргөөний бүртгэл, онгодын mind map. https://huyagtan.mn дээр ажиллана.
-Шаардлага: «Хуягтан Mind Map систем: Шаардлага v2.0». Энэ репо Phase 1 (MVP)-ийг агуулна.
+Шаардлага: «Хуягтан Mind Map систем: Шаардлага v2.0». Энэ репо Phase 1 (MVP) ба Phase 2-ыг агуулна.
 
 ## Технологи
 
 - Next.js 15 (App Router, standalone) + TypeScript, нэг процесс
 - PostgreSQL 16: SQL миграци (`migrations/`), RLS (өргөөгөөр тусгаарлалт), audit trigger
-- Auth.js: имэйлийн нэг удаагийн холбоос + Google (сешн DB-д)
+- Auth.js: имэйлийн нэг удаагийн холбоос + Google (сешн DB-д); SMS код (гарц тохируулсан үед)
+- Realtime: PostgreSQL LISTEN/NOTIFY → SSE. Сувгаар зөвхөн дохио явна, өгөгдөл явахгүй
 - UI: prototype-ийн design system (`app/globals.css`)
 
 ## Бүтэц
@@ -19,6 +20,12 @@
 | `lib/viewer.ts` | Нэвтэрсэн хүн, өргөө, түвшин, эрх; «Түвшнээр харах» |
 | `lib/project.ts` | **Талбарын шүүлт нэг газар**: `projectPerson(person, viewer)` |
 | `lib/import.ts`, `lib/norm.ts` | Google Sheet импорт, нэр/онгод тулгах |
+| `lib/realtime.ts`, `app/api/events` | Realtime дохио (P2.1) |
+| `lib/outbox.ts`, `lib/worker.ts` | Мэдэгдлийн дараалал, дахин оролдлого (P2.7) |
+| `lib/sms.ts`, `lib/otp.ts`, `lib/captcha.ts` | SMS код, captcha (P2.3) |
+| `lib/urguu.ts` | Өргөө үүсгэх/хуулах, өргөө хоорондын эрх, «Дэлхийн үрс» (P2.4, P2.5) |
+| `lib/privacy.ts`, `lib/xlsx.ts`, `components/mapExport.ts` | Өгөгдлөө татах/устгуулах, Excel, PNG/PDF экспорт (P2.6, P2.8) |
+| `lib/errors.ts`, `instrumentation.ts` | Алдааны хяналт (P2.9) |
 | `app/(app)/` | Mind map, Хүмүүс, Миний мэдээлэл, Админ самбар |
 | `app/actions/` | Server actions (бүх бичих үйлдэл, эрх шалгалттай) |
 | `deploy/` | Серверийн тохиргоо, нөөцлөлт: [deploy/README.md](deploy/README.md) |

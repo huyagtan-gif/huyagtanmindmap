@@ -354,4 +354,24 @@ d("өгөгдлийн сан: миграци, RLS, audit, импорт", () => {
     expect(await db.withCtx({ personId: admin, urguuId: B }, (q) => q("SELECT 1 FROM data_request WHERE person_id = $1", [p.id]))).toHaveLength(0);
     await expect(db.withCtx({ personId: admin, urguuId: A }, (q) => q("DELETE FROM data_request"))).rejects.toThrow(/permission denied/);
   });
+
+  it("алдааны бүртгэл: давхардахгүй, хувийн мэдээлэлгүй, шинэ алдаанд нэг л удаа мэдэгдэнэ (P2.9)", async () => {
+    const { logError, scrub } = await import("@/lib/errors");
+    expect(scrub("user a.b@example.com утас +97699112233 id 3f2b6c1e-1111-4222-8333-444455556666")).toBe("user <имэйл> утас <тоо> id <id>");
+    await db.sys("INSERT INTO users (email, is_platform_admin) VALUES ('ops-alert@example.com', true)");
+    const err = new Error("duplicate key for leak@example.com (99112233)");
+    await logError({ source: "server", message: err.message, stack: err.stack, route: "GET /people/[id] (render)", digest: "1311915923" });
+    await logError({ source: "server", message: err.message, stack: err.stack, route: "GET /people/[id] (render)" });
+    const rows = await db.sys("SELECT source, message, stack, route, digest, count, alerted_at IS NOT NULL AS alerted FROM error_log");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ source: "server", message: "duplicate key for <имэйл> (<тоо>)", route: "GET /people/[id] (render)", digest: "1311915923", count: 2, alerted: true });
+    expect(rows[0].stack).not.toMatch(/leak@example|99112233/);
+    // Ижил алдаа хоёр удаа гарсан ч мэдэгдэл нэг л удаа дараалалд орно
+    expect(await db.sys("SELECT 1 FROM notification_outbox WHERE recipient = 'ops-alert@example.com' AND template = 'error_alert'")).toHaveLength(1);
+    // Хөтчөөс ирсэн (нэвтрээгүй хүн ч илгээж чадах) алдаа бүртгэгдэнэ, гэхдээ имэйл явуулахгүй
+    await logError({ source: "client", message: "ResizeObserver loop", route: "/map" });
+    expect((await db.sys("SELECT count(*)::int AS n FROM error_log"))[0].n).toBe(2);
+    expect(await db.sys("SELECT 1 FROM notification_outbox WHERE recipient = 'ops-alert@example.com'")).toHaveLength(1);
+    await expect(db.withCtx({ personId: admin, urguuId: A }, (q) => q("SELECT * FROM error_log"))).rejects.toThrow(/permission denied/);
+  });
 });

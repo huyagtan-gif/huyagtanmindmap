@@ -1,5 +1,6 @@
 import { processOutbox } from "./outbox";
 import { purgeOtps } from "./otp";
+import { logError, purgeErrors } from "./errors";
 
 // Дэвсгэр ажилчин: нэг процесс, минут тутам. Outbox-ын хугацаа болсон мэдэгдлийг илгээнэ, хуучин кодыг цэвэрлэнэ.
 const g = globalThis as unknown as { __worker?: boolean };
@@ -14,9 +15,13 @@ export function startWorker() {
     busy = true;
     try {
       await processOutbox();
-      if (n++ % 60 === 0) await purgeOtps();
+      if (n++ % 60 === 0) {
+        await purgeOtps();
+        await purgeErrors();
+      }
     } catch (e) {
       console.error("[worker]", e instanceof Error ? e.message : e);
+      void logError({ source: "worker", message: e instanceof Error ? e.message : String(e), stack: e instanceof Error ? e.stack : null });
     } finally {
       busy = false;
     }

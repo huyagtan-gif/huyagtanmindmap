@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { assignUrguuAdmin, createUrguuAction, retryOutbox, saveUrguu, setUrguuState } from "@/app/actions/system";
+import { assignUrguuAdmin, createUrguuAction, resolveError, retryOutbox, saveUrguu, setUrguuState } from "@/app/actions/system";
 import { ConfirmButton } from "@/components/AutoSubmit";
 import { Flash } from "@/components/Flash";
 import { Empty } from "@/components/ui";
@@ -12,7 +12,9 @@ import { requirePlatformAdmin } from "@/lib/viewer";
 
 export const metadata = { title: "Систем" };
 
-const TABS = [["urguu", "Өргөөнүүд"], ["outbox", "Мэдэгдэл"]] as const;
+const TABS = [["urguu", "Өргөөнүүд"], ["outbox", "Мэдэгдэл"], ["errors", "Алдаа, төлөв"]] as const;
+const SOURCE: Record<string, string> = { server: "Сервер", worker: "Дэвсгэр ажил", client: "Хөтөч" };
+type Err = { id: string; source: string; message: string; stack: string | null; route: string | null; digest: string | null; build: string | null; count: number; first_at: Date; last_at: Date };
 const TEMPLATE: Record<string, string> = {
   magic_link: "Нэвтрэх холбоос", invite: "Урилга", admin_new_request: "Админд: шинэ хүсэлт", membership_approved: "Бүртгэл батлагдсан",
   membership_rejected: "Бүртгэл татгалзсан", otp_login: "SMS код (нэвтрэх)", otp_verify: "SMS код (утас баталгаажуулах)",
@@ -44,6 +46,15 @@ export default async function System({ searchParams }: { searchParams: Promise<{
                 AND EXISTS (SELECT 1 FROM permission pm WHERE pm.role_id = r.id AND pm.key = 'settings.manage')) AS admins
          FROM urguu u ORDER BY u.created_at`)
     : [];
+  const errs = tab === "errors" ? await sys<Err>("SELECT id, source, message, stack, route, digest, build, count, first_at, last_at FROM error_log ORDER BY last_at DESC LIMIT 100") : [];
+  const [st] = tab === "errors"
+    ? await sys<{ db: string; day: number; people: number }>(
+        `SELECT pg_size_pretty(pg_database_size(current_database())) AS db,
+                (SELECT count(*)::int FROM error_log WHERE last_at > now() - interval '24 hours') AS day,
+                (SELECT count(*)::int FROM person) AS people`)
+    : [null];
+  const up = Math.floor(process.uptime());
+  const upText = up >= 86400 ? `${Math.floor(up / 86400)} хоног` : up >= 3600 ? `${Math.floor(up / 3600)} цаг` : `${Math.max(1, Math.floor(up / 60))} мин`;
   return (
     <>
       <div className="pagehead"><div><div className="crumb">Платформ · {v.personName}</div><h1>Систем</h1></div></div>
@@ -94,6 +105,48 @@ export default async function System({ searchParams }: { searchParams: Promise<{
                 </table>
               </div>
             ) : <Empty title="Мэдэгдэл алга" />}
+          </div>
+        </>
+      ) : null}
+      {tab === "errors" && st ? (
+        <>
+          <div className="kpis">
+            <div className="kpi"><span className="small muted">Алдаа (24 цаг)</span><b className="num">{st.day}</b></div>
+            <div className="kpi"><span className="small muted">Тасралтгүй ажилласан</span><b className="num">{upText}</b></div>
+            <div className="kpi"><span className="small muted">Санах ой (апп)</span><b className="num">{Math.round(process.memoryUsage().rss / 1048576)} MB</b></div>
+            <div className="kpi"><span className="small muted">Өгөгдлийн сан</span><b className="num">{st.db}</b></div>
+          </div>
+          <div className="card p0">
+            <div className="row wrap between" style={{ padding: "16px 16px 8px" }}>
+              <div className="col g4">
+                <h2>Алдааны бүртгэл</h2>
+                <span className="small muted">
+                  Серверт болон хөтөч дээр гарсан алдаа автоматаар бүртгэгдэнэ. Ижил алдаа нэг мөрөнд тоологдоно. Шинэ алдаа гарвал супер админд имэйл очно (ижил алдаанд 24 цагт нэг удаа). 30 хоногийн дараа автоматаар устна.
+                  {" "}Орчин: {process.env.APP_ENV === "staging" ? "туршилтын (staging)" : "үндсэн"} · Хувилбар: {(process.env.NEXT_PUBLIC_BUILD_SHA || "local").slice(0, 7)} · Шууд холболт: {rt.subscribers}
+                </span>
+              </div>
+              {errs.length ? <form action={resolveError}><input type="hidden" name="all" value="1" /><ConfirmButton className="btn sm" message="Алдааны жагсаалтыг бүхэлд нь цэвэрлэх үү?">Бүгдийг цэвэрлэх</ConfirmButton></form> : null}
+            </div>
+            {errs.length ? errs.map((e) => (
+              <div key={e.id} className="list-item" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
+                <div className="col g4" style={{ flex: "1 1 320px", minWidth: 0 }}>
+                  <div className="row wrap" style={{ gap: 8 }}>
+                    <span className={`chip ${e.source === "client" ? "" : "bad"}`} style={{ height: 22 }}>{SOURCE[e.source] || e.source}</span>
+                    {e.count > 1 ? <span className="chip warn" style={{ height: 22 }}>{e.count} удаа</span> : null}
+                    <span className="tiny muted num">{fmtDateTime(e.last_at)}{e.count > 1 ? ` (анх ${fmtDateTime(e.first_at)})` : ""}</span>
+                  </div>
+                  <b style={{ overflowWrap: "anywhere" }}>{e.message}</b>
+                  <span className="tiny muted" style={{ overflowWrap: "anywhere" }}>{[e.route, e.digest ? `код ${e.digest}` : null, e.build ? `хувилбар ${e.build.slice(0, 7)}` : null].filter(Boolean).join(" · ")}</span>
+                  {e.stack ? (
+                    <details>
+                      <summary className="small" style={{ cursor: "pointer" }}>Дэлгэрэнгүй</summary>
+                      <pre className="tiny" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: "8px 0 0", padding: 12, background: "var(--sunk)", borderRadius: 8, maxHeight: 280, overflow: "auto" }}>{e.stack}</pre>
+                    </details>
+                  ) : null}
+                </div>
+                <form action={resolveError}><input type="hidden" name="id" value={e.id} /><button className="btn sm">Шийдвэрлэсэн</button></form>
+              </div>
+            )) : <Empty title="Алдаа бүртгэгдээгүй" />}
           </div>
         </>
       ) : null}

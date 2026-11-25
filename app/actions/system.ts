@@ -1,6 +1,7 @@
 "use server";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { sys } from "@/lib/db";
 import { processOutbox, requeue } from "@/lib/outbox";
 import { requirePlatformAdmin } from "@/lib/viewer";
 
@@ -16,6 +17,15 @@ export async function retryOutbox(fd: FormData) {
   if (/^\d+$/.test(id)) await requeue(id);
   const r = await processOutbox(20);
   done("/admin/system?tab=outbox", `Дахин оролдлоо: ${r.sent} илгээгдсэн, ${r.failed} амжилтгүй`);
+}
+
+/** P2.9: алдааны бүртгэлийг шийдвэрлэсэн гэж тэмдэглэн устгана (id-гүй бол бүгдийг). */
+export async function resolveError(fd: FormData) {
+  await requirePlatformAdmin();
+  const id = String(fd.get("id") || "");
+  if (/^\d+$/.test(id)) await sys("DELETE FROM error_log WHERE id = $1", [id]);
+  else if (fd.get("all")) await sys("DELETE FROM error_log");
+  done("/admin/system?tab=errors", id ? "Алдааг шийдвэрлэсэн гэж тэмдэглэлээ" : "Алдааны жагсаалтыг цэвэрлэлээ");
 }
 
 /* ---------- P2.4 Олон өргөө ---------- */

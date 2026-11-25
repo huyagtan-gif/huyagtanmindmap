@@ -74,6 +74,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             </div>
           </header>
           <main className="main" id="main">
+            {process.env.APP_ENV === "staging" ? <div className="banner" role="note">Туршилтын орчин (staging). Энд оруулсан өгөгдөл жинхэнэ биш, хэдийд ч устаж болно.</div> : null}
             {v.viewAs ? (
               <div className="banner">
                 <span>Та «{v.role.name}» түвшнээр харж байна. Энэ түвшний хүн яг ийм харагдацтай байна.</span>
