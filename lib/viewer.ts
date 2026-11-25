@@ -15,6 +15,8 @@ export type Viewer = {
   formCompleted: boolean;
   isPlatformAdmin: boolean;
   urguu: { id: string; name: string } | null;
+  /** Батлагдсан гишүүнчлэлтэй идэвхтэй өргөөнүүд (өргөө сэлгэх цэс, P2.4) */
+  urguus: { id: string; name: string }[];
   membershipState: "pending" | "approved" | "rejected" | "closed" | null;
   /** Жинхэнэ түвшин */
   realRole: { id: string; name: string } | null;
@@ -74,7 +76,7 @@ async function linkUser(userId: number, email: string, name: string | null): Pro
   });
 }
 
-async function notifyAdmins(q: Q, urguuId: string, personId: string) {
+export async function notifyAdmins(q: Q, urguuId: string, personId: string) {
   const [p] = await q<{ father_name: string | null; given_name: string }>("SELECT father_name, given_name FROM person WHERE id = $1", [personId]);
   const admins = await q<{ email: string }>(
     `SELECT DISTINCT pp.email FROM membership m
@@ -92,6 +94,7 @@ async function notifyAdmins(q: Q, urguuId: string, personId: string) {
       title: "Шинэ бүртгэлийн хүсэлт",
       body: `<b>${nm}</b> бүртгүүлэх хүсэлт илгээлээ. Батлах эсвэл татгалзана уу.`,
       cta: { label: "Хүсэлтийг харах", url: `${SITE_URL}/admin/approvals` },
+      urguuId,
     });
 }
 
@@ -111,7 +114,7 @@ export const getViewer = cache(async (): Promise<Viewer | null> => {
   const v: Viewer = {
     userId: u.id, email: u.email, userName: u.name, personId, personName: null, formCompleted: false,
     isPlatformAdmin: u.is_platform_admin || (!!superEmail() && u.email.toLowerCase() === superEmail()),
-    urguu: null, membershipState: null, realRole: null, role: null, viewAs: false, canViewAs: false,
+    urguu: null, urguus: [], membershipState: null, realRole: null, role: null, viewAs: false, canViewAs: false,
     perms: new Set(), fields: new Set(), views: new Set(),
   };
   if (!personId) return v;
@@ -129,6 +132,7 @@ export const getViewer = cache(async (): Promise<Viewer | null> => {
     [personId],
   );
   if (!ms.length) return v;
+  v.urguus = ms.filter((x) => x.state === "approved" && x.role_id).map((x) => ({ id: x.urguu_id, name: x.urguu_name }));
   const jar = await cookies();
   const want = jar.get("urguu")?.value;
   const m = ms.find((x) => x.urguu_id === want && x.state === "approved") ?? ms[0];

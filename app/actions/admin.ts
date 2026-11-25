@@ -355,3 +355,18 @@ export async function mergePeople(fd: FormData) {
   });
   done("/admin/import", msg);
 }
+
+/* ---------- P2.5 Өргөө хоорондын харах эрх ---------- */
+export async function saveGrants(fd: FormData) {
+  const v = await requirePerm("settings.manage");
+  const want = fd.getAll("grantee").map((x) => uuid(String(x))).filter((x): x is string => !!x && x !== v.urguu.id);
+  const { sys } = await import("@/lib/db");
+  // Зөвхөн идэвхтэй, бодит өргөөнд л эрх олгоно (өргөөний жагсаалтыг апп-ын role харахгүй тул системийн холболтоор шалгана).
+  const valid = (await sys<{ id: string }>("SELECT id FROM urguu WHERE state = 'active' AND id = ANY($1::uuid[])", [want])).map((r) => r.id);
+  await asViewer(v, async (q) => {
+    await q("DELETE FROM cross_urguu_grant WHERE owner_urguu_id = app_urguu() AND NOT (grantee_urguu_id = ANY($1::uuid[]))", [valid]);
+    for (const g of valid)
+      await q("INSERT INTO cross_urguu_grant (owner_urguu_id, grantee_urguu_id, created_by) VALUES (app_urguu(), $1, $2) ON CONFLICT DO NOTHING", [g, v.personId]);
+  });
+  done("/admin/settings?tab=grants", "Өргөө хоорондын эрх хадгалагдлаа");
+}

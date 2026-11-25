@@ -4,6 +4,7 @@ import { AuthFrame } from "@/components/AuthFrame";
 import { register } from "@/app/actions/auth";
 import { Captcha } from "@/components/Captcha";
 import { captchaSiteKey } from "@/lib/captcha";
+import { sys } from "@/lib/db";
 import { getViewer } from "@/lib/viewer";
 
 export const metadata = { title: "Бүртгүүлэх" };
@@ -22,6 +23,7 @@ export default async function Register({ searchParams }: { searchParams: Promise
   const sp = await searchParams;
   const v = await getViewer();
   if (v?.personId) redirect("/");
+  const urguus = await sys<{ id: string; name: string }>("SELECT id, name FROM urguu WHERE state = 'active' ORDER BY created_at");
   return (
     <AuthFrame wide title="Бүртгүүлэх" sub="Хүсэлтийг өргөөний админ баталсны дараа та бүртгэлийн формоо бөглөнө.">
       {sp.e ? <div className="banner bad" role="alert">{ERR[sp.e] || "Алдаа гарлаа."}</div> : null}
@@ -31,6 +33,13 @@ export default async function Register({ searchParams }: { searchParams: Promise
           <label className="field"><span>Өөрийн нэр <span className="req">*</span></span><input className="inp" name="given_name" required maxLength={80} autoComplete="given-name" /></label>
         </div>
         <label className="field">Ургийн овог<input className="inp" name="clan_name" maxLength={80} /></label>
+        {urguus.length > 1 ? (
+          <label className="field">
+            <span>Өргөө <span className="req">*</span></span>
+            <select className="inp" name="urguu_id" required defaultValue={urguus[0].id}>{urguus.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
+            <span className="hint">Элсэх хүсэлтийг энэ өргөөний админ батална.</span>
+          </label>
+        ) : null}
         <div className="formgrid">
           <label className="field"><span>Утас <span className="req">*</span></span><input className="inp" name="phone" required inputMode="tel" autoComplete="tel" placeholder="9911 2233" maxLength={20} /></label>
           <label className="field">

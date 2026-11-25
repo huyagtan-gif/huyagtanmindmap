@@ -227,4 +227,66 @@ d("өгөгдлийн сан: миграци, RLS, audit, импорт", () => {
     const [r] = await db.sys("SELECT phone_verified FROM person_private WHERE person_id = $1", [p1.id]);
     expect(r.phone_verified).toBe(false);
   });
+
+  it("шинэ өргөө: тохиргоо ба онгодын мод загвараас хуулагдана (P2.4)", async () => {
+    const { createUrguu } = await import("@/lib/urguu");
+    const C = await db.sysTx({ personId: admin }, (q) => createUrguu(q, { name: "Гурав дахь өргөө", description: null, templateId: A, ongodFromId: A }));
+    const cnt = (u: string) => db.sys(
+      `SELECT (SELECT count(*)::int FROM role WHERE urguu_id = $1) AS roles, (SELECT count(*)::int FROM role WHERE urguu_id = $1 AND is_system) AS sysroles,
+              (SELECT count(*)::int FROM permission WHERE urguu_id = $1) AS perms, (SELECT count(*)::int FROM role_view WHERE urguu_id = $1) AS views,
+              (SELECT count(*)::int FROM field_permission WHERE urguu_id = $1) AS fields, (SELECT count(*)::int FROM urguu_deedes WHERE urguu_id = $1) AS deedes,
+              (SELECT count(*)::int FROM ongod WHERE urguu_id = $1 AND NOT needs_review) AS ongods,
+              (SELECT count(*)::int FROM ongod WHERE urguu_id = $1 AND NOT needs_review AND parent_id IS NULL) AS roots`, [u]);
+    const [a] = await cnt(A), [c] = await cnt(C);
+    expect(c).toEqual(a);
+    expect(c.sysroles).toBe(1);
+    // Хуулбар мод зөвхөн шинэ өргөөний зангилаа руу заана (эх өргөөний зангилаатай холбогдохгүй)
+    expect(await db.sys("SELECT 1 FROM ongod c JOIN ongod p ON p.id = c.parent_id WHERE c.urguu_id = $1 AND p.urguu_id <> $1", [C])).toHaveLength(0);
+    // Хүмүүс хуулагдахгүй
+    expect(await db.sys("SELECT 1 FROM membership WHERE urguu_id = $1", [C])).toHaveLength(0);
+  });
+
+  it("өргөө хоорондын эрх ба «Дэлхийн үрс»: давхардалгүй, нууц талбаргүй (P2.5)", async () => {
+    const { loadWorld } = await import("@/lib/urguu");
+    const [{ id: C }] = await db.sys("SELECT id FROM urguu WHERE name = 'Гурав дахь өргөө'");
+    const member = async (name: string, us: string[], phone: string) => {
+      const [p] = await db.sys("INSERT INTO person (given_name, created_urguu_id) VALUES ($1, $2) RETURNING id", [name, us[0]]);
+      await db.sys("INSERT INTO person_private (person_id, phone, email) VALUES ($1, $2, $3)", [p.id, phone, `${phone.slice(-4)}@world.example.com`]);
+      for (const u of us) await db.sys("INSERT INTO membership (person_id, urguu_id, role_id, state) SELECT $1, $2, id, 'approved' FROM role WHERE urguu_id = $2 AND NOT is_system ORDER BY sort DESC LIMIT 1", [p.id, u]);
+      return p.id as string;
+    };
+    const both = await member("Хоёр-өргөөний-хүн", [A, C], "+97670001111");
+    const onlyC = await member("Гурав-дахийн-хүн", [C], "+97670002222");
+    const viewer: any = { userId: 1, personId: admin, isPlatformAdmin: false, viewAs: false, urguu: { id: A, name: "A" }, fields: new Set(["phone", "email"]) };
+
+    // Эрх олгоогүй үед өөр өргөөний хүн харагдахгүй
+    let w = await loadWorld(viewer);
+    expect(w.urguus.map((u) => u.id)).toEqual([A]);
+    expect(w.people.some((p) => p.id === onlyC)).toBe(false);
+
+    // Зөвхөн эзэмшигч өргөө эрх олгоно: A нь C-ийн нэрийн өмнөөс олгож чадахгүй
+    await expect(db.withCtx({ personId: admin, urguuId: A }, (q) => q("INSERT INTO cross_urguu_grant (owner_urguu_id, grantee_urguu_id) VALUES ($1, $2)", [C, A]))).rejects.toThrow(/row-level security/);
+    await db.withCtx({ personId: admin, urguuId: C }, (q) => q("INSERT INTO cross_urguu_grant (owner_urguu_id, grantee_urguu_id) VALUES ($1, $2)", [C, A]));
+    // Эрх авсан тал уншина, гэхдээ устгаж чадахгүй; гуравдагч өргөө харахгүй
+    await db.withCtx({ personId: admin, urguuId: A }, async (q) => {
+      expect(await q("SELECT 1 FROM cross_urguu_grant")).toHaveLength(1);
+      expect(await q("DELETE FROM cross_urguu_grant RETURNING id")).toHaveLength(0);
+    });
+    expect(await db.withCtx({ personId: admin, urguuId: B }, (q) => q("SELECT 1 FROM cross_urguu_grant"))).toHaveLength(0);
+
+    w = await loadWorld(viewer);
+    expect(w.urguus.map((u) => u.id)).toEqual([A, C]);
+    const pb = w.people.filter((p) => p.id === both);
+    expect(pb).toHaveLength(1); // хүн давхардахгүй
+    expect(pb[0].urguus).toHaveLength(2);
+    expect(w.people.find((p) => p.id === onlyC)).toMatchObject({ own: false });
+    const json = JSON.stringify(w);
+    expect(json).not.toMatch(/\+9767000|world\.example\.com/); // утас, имэйл огт байхгүй (өөрийн өргөөнийх ч энэ харагдацад орохгүй)
+    // B өргөө эрх олгоогүй → харагдахгүй
+    expect(w.urguus.some((u) => u.id === B)).toBe(false);
+    // Хаагдсан өргөө харагдахгүй
+    await db.sys("UPDATE urguu SET state = 'closed' WHERE id = $1", [C]);
+    expect((await loadWorld(viewer)).urguus.map((u) => u.id)).toEqual([A]);
+    await db.sys("UPDATE urguu SET state = 'active' WHERE id = $1", [C]);
+  });
 });

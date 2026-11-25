@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { confirmPhoneVerify, requestPhoneVerify } from "@/app/actions/auth";
+import { confirmPhoneVerify, requestJoin, requestPhoneVerify } from "@/app/actions/auth";
 import { PersonForm } from "@/components/PersonForm";
 import { sys } from "@/lib/db";
 import { smsMode } from "@/lib/sms";
@@ -24,12 +24,19 @@ const PV: Record<string, [string, string]> = {
   format: ["bad", "Утасны дугаарын хэлбэр буруу байна. Формдоо засаж хадгална уу."],
 };
 
-export default async function Me({ searchParams }: { searchParams: Promise<{ e?: string; saved?: string; pv?: string }> }) {
+export default async function Me({ searchParams }: { searchParams: Promise<{ e?: string; saved?: string; pv?: string; j?: string }> }) {
   const v = await requireMember();
   const sp = await searchParams;
   // Өөрийн мөр: системийн холболтоор зөвхөн өөрийн person_id-аар уншина.
   const [priv] = await sys<{ phone: string | null; phone_verified: boolean }>("SELECT phone, phone_verified FROM person_private WHERE person_id = $1", [v.personId]);
   const sms = smsMode() !== "off";
+  // P2.4: миний өргөөнүүд ба элсэх боломжтой бусад идэвхтэй өргөө (нэрс нь нууц биш).
+  const myUrguus = await sys<{ id: string; name: string; state: string; role_name: string | null }>(
+    `SELECT u.id, u.name, m.state, r.name AS role_name FROM membership m JOIN urguu u ON u.id = m.urguu_id LEFT JOIN role r ON r.id = m.role_id
+     WHERE m.person_id = $1 AND u.state = 'active' ORDER BY m.created_at`, [v.personId]);
+  const joinable = await sys<{ id: string; name: string }>(
+    "SELECT id, name FROM urguu u WHERE state = 'active' AND NOT EXISTS (SELECT 1 FROM membership m WHERE m.urguu_id = u.id AND m.person_id = $1 AND m.state <> 'rejected') ORDER BY created_at", [v.personId]);
+  const MS: Record<string, [string, string]> = { approved: ["ok", "Батлагдсан"], pending: ["warn", "Хүлээгдэж буй"], rejected: ["bad", "Татгалзсан"], closed: ["", "Хаагдсан"] };
   const pv = sp.pv ? PV[sp.pv] : null;
   const p = v.perms;
   const admin = [
@@ -82,6 +89,28 @@ export default async function Me({ searchParams }: { searchParams: Promise<{ e?:
           {sms ? "Утсаа баталгаажуулбал имэйлийн холбоосоос гадна SMS кодоор нэвтрэх боломжтой болно." : "SMS-ээр баталгаажуулах боломж одоогоор идэвхжээгүй байна."}
         </span>
       </div>
+      {myUrguus.length > 1 || joinable.length ? (
+        <div className="card col g12" id="urguu">
+          <h2>Миний өргөөнүүд</h2>
+          {sp.j ? <div className={`banner ${sp.j === "sent" ? "ok" : "bad"}`} role="status">{sp.j === "sent" ? "Хүсэлт илгээгдлээ. Тэр өргөөний админ баталсны дараа өргөө сэлгэх цэсэнд гарна." : sp.j === "rate" ? "Хэт олон хүсэлт илгээлээ. Дараа дахин оролдоно уу." : "Хүсэлт илгээх боломжгүй байна."}</div> : null}
+          <div className="col">
+            {myUrguus.map((u) => (
+              <div key={u.id} className="row between" style={{ minHeight: 40 }}>
+                <b>{u.name}</b>
+                <span className="row" style={{ gap: 8 }}>{u.state === "approved" && u.role_name ? <span className="small muted">{u.role_name}</span> : null}<span className={`chip ${MS[u.state]?.[0] || ""}`} style={{ height: 22 }}>{MS[u.state]?.[1] || u.state}</span></span>
+              </div>
+            ))}
+          </div>
+          {joinable.length ? (
+            <form action={requestJoin} className="row wrap" style={{ alignItems: "flex-end" }}>
+              <label className="field" style={{ flex: "1 1 220px" }}><span className="tiny muted">Өөр өргөөнд элсэх хүсэлт</span>
+                <select className="inp sm" name="urguu_id">{joinable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
+              </label>
+              <button className="btn sm">Хүсэлт илгээх</button>
+            </form>
+          ) : null}
+        </div>
+      ) : null}
     </>
   );
 }

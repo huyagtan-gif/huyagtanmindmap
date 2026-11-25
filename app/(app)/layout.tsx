@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { logout, setViewAs } from "@/app/actions/auth";
+import { logout, setViewAs, switchUrguu } from "@/app/actions/auth";
+import { AutoSubmitSelect } from "@/components/AutoSubmit";
 import { BottomNav, SideNav, ViewAsSelect, type NavItem } from "@/components/Nav";
 import { RealtimeProvider } from "@/components/Realtime";
 import { Avatar, Icon } from "@/components/ui";
@@ -28,7 +29,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (p.has("import.run") || p.has("person.merge")) items.push({ href: "/admin/import", name: "Импорт, нэгтгэл", icon: "share", admin: true });
   if (p.has("audit.view")) items.push({ href: "/admin/audit", name: "Өөрчлөлтийн түүх", icon: "log", admin: true });
   if (v.isPlatformAdmin && !v.viewAs) items.push({ href: "/admin/system", name: "Систем", icon: "sys", admin: true });
+  if (p.has("world.view")) items.splice(2, 0, { href: "/world", name: "Дэлхийн үрс", short: "Дэлхий", icon: "globe" });
   const name = v.personName || v.email;
+  // P2.4: олон өргөөнд гишүүн бол өргөө сэлгэх цэс
+  const ug = (compact: boolean) =>
+    v.urguus.length > 1 ? (
+      <form action={switchUrguu} className="ug" style={compact ? { paddingRight: 4 } : undefined}>
+        <span className="mk">{v.urguu.name[0]}</span>
+        <AutoSubmitSelect name="urguu" defaultValue={v.urguu.id} aria-label="Өргөө сэлгэх"
+          style={{ flex: 1, minWidth: 0, border: 0, background: "transparent", font: "inherit", fontWeight: 600, color: "inherit", cursor: "pointer", height: 32, maxWidth: compact ? 180 : undefined }}>
+          {v.urguus.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+        </AutoSubmitSelect>
+      </form>
+    ) : (
+      <div className="ug" style={{ cursor: "default" }}><span className="mk">{v.urguu.name[0]}</span><span style={compact ? undefined : { flex: 1 }}>{v.urguu.name}</span></div>
+    );
   return (
     <RealtimeProvider>
       <div className="app">
@@ -36,7 +51,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <div className="brand"><span className="logo" style={{ color: "#fff" }}><Icon n="map" s={18} /></span>Хуягтан</div>
           <div className="col g4">
             <span className="tiny muted" style={{ padding: "0 4px", fontWeight: 600, letterSpacing: ".04em" }}>ӨРГӨӨ</span>
-            <div className="ug" style={{ cursor: "default" }}><span className="mk">{v.urguu.name[0]}</span><span style={{ flex: 1 }}>{v.urguu.name}</span></div>
+            {ug(false)}
           </div>
           <SideNav items={items} />
           <div className="who">
@@ -51,7 +66,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </aside>
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
           <header className="topbar">
-            <div className="ug"><span className="mk">{v.urguu.name[0]}</span>{v.urguu.name}</div>
+            {ug(true)}
             <div className="row">
               {v.canViewAs ? <ViewAsSelect compact roles={roles} current={v.role.id} action={setViewAs} /> : null}
               <form action={logout}><button className="btn icon ghost" aria-label="Гарах" style={{ height: 40, width: 40 }}><Icon n="out" s={18} /></button></form>

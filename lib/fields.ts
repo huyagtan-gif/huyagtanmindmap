@@ -22,10 +22,11 @@ export const PERMISSIONS = [
   { key: "invite.send", name: "Урилга илгээх" },
   { key: "ongod.edit", name: "Онгодын мод засах" },
   { key: "settings.manage", name: "Тохиргоо удирдах" },
-  { key: "export.csv", name: "CSV экспорт" },
+  { key: "export.csv", name: "Экспорт (CSV, Excel)" },
   { key: "audit.view", name: "Өөрчлөлтийн түүх харах" },
   { key: "import.run", name: "Импорт хийх" },
   { key: "role.view_as", name: "Түвшнээр харах" },
+  { key: "world.view", name: "«Дэлхийн үрс» харах" },
 ] as const;
 export type PermKey = (typeof PERMISSIONS)[number]["key"];
 

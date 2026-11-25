@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { signIn, signOut } from "@/lib/auth";
 import { sys, sysTx } from "@/lib/db";
 import { rateLimit } from "@/lib/ratelimit";
-import { getViewer } from "@/lib/viewer";
+import { getViewer, notifyAdmins } from "@/lib/viewer";
 import { capFirst, capWords, normPhone } from "@/lib/norm";
 import { verifyCaptcha } from "@/lib/captcha";
 import { checkOtp, issueOtp } from "@/lib/otp";
@@ -47,6 +47,7 @@ export async function loginGoogle(fd: FormData) {
 
 export async function logout() {
   (await cookies()).delete("view_as");
+  (await cookies()).delete("urguu");
   await signOut({ redirectTo: "/login" });
 }
 
@@ -70,7 +71,10 @@ export async function register(fd: FormData) {
   const [exists] = await sys("SELECT 1 FROM person_private WHERE lower(email) = $1", [email]);
   if (!exists) {
     const personId = await sysTx({ userId: viewer?.userId ?? null }, async (q) => {
-      const [u] = await q<{ id: string }>("SELECT id FROM urguu WHERE state = 'active' ORDER BY created_at LIMIT 1");
+      // P2.4: олон өргөөтэй бол бүртгүүлэгч өргөөгөө сонгоно; сонгоогүй бол хамгийн эхний идэвхтэй өргөө.
+      const want = String(fd.get("urguu_id") || "");
+      const [u] = await q<{ id: string }>(
+        "SELECT id FROM urguu WHERE state = 'active' ORDER BY (id::text = $1) DESC, created_at LIMIT 1", [want]);
       const [st] = await q<{ id: string }>("SELECT id FROM status WHERE active ORDER BY sort LIMIT 1");
       const [role] = await q<{ id: string }>("SELECT id FROM role WHERE urguu_id = $1 AND NOT is_system ORDER BY sort DESC LIMIT 1", [u.id]);
       const [p] = await q<{ id: string }>(
@@ -204,4 +208,38 @@ export async function confirmPhoneVerify(fd: FormData) {
     throw e;
   }
   redirect("/me?pv=ok#account");
+}
+
+/* ---------- P2.4 Өргөө сэлгэх, өөр өргөөнд элсэх хүсэлт ---------- */
+
+export async function switchUrguu(fd: FormData) {
+  const v = await getViewer();
+  const id = String(fd.get("urguu") || "");
+  const jar = await cookies();
+  if (v?.urguus.some((u) => u.id === id)) {
+    jar.set("urguu", id, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 365 * 24 * 3600 });
+    jar.delete("view_as"); // «Түвшнээр харах» нь өргөө тус бүрийн түвшин
+  }
+  redirect("/map");
+}
+
+/** Гишүүн өөр өргөөнд элсэх хүсэлт гаргана → тэр өргөөний админ батална. */
+export async function requestJoin(fd: FormData) {
+  const v = await getViewer();
+  if (!v?.personId) redirect("/login");
+  const id = String(fd.get("urguu_id") || "");
+  if (!/^[0-9a-f-]{36}$/i.test(id)) redirect("/me#urguu");
+  if (!rateLimit(`join:${v.personId}`, 5)) redirect("/me?j=rate#urguu");
+  const ok = await sysTx({ userId: v.userId, personId: v.personId }, async (q) => {
+    const [u] = await q<{ id: string }>("SELECT id FROM urguu WHERE id = $1 AND state = 'active'", [id]);
+    if (!u) return false;
+    const [role] = await q<{ id: string }>("SELECT id FROM role WHERE urguu_id = $1 AND NOT is_system ORDER BY sort DESC LIMIT 1", [id]);
+    const ins = await q(
+      `INSERT INTO membership (person_id, urguu_id, role_id, state) VALUES ($1,$2,$3,'pending')
+       ON CONFLICT (person_id, urguu_id) DO UPDATE SET state = 'pending', decided_by = NULL, decided_at = NULL WHERE membership.state = 'rejected' RETURNING id`,
+      [v.personId, id, role?.id ?? null]);
+    if (ins.length) await notifyAdmins(q, id, v.personId!);
+    return ins.length > 0;
+  });
+  redirect(`/me?j=${ok ? "sent" : "no"}#urguu`);
 }

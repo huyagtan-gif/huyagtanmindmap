@@ -1,6 +1,6 @@
 import Link from "next/link";
 import {
-  deleteListItem, deleteQuestion, deleteRole, saveFieldPermissions, saveListItem, savePermissions, saveQuestion, saveRole, saveRoleViews, setMemberRole,
+  deleteListItem, deleteQuestion, deleteRole, saveFieldPermissions, saveGrants, saveListItem, savePermissions, saveQuestion, saveRole, saveRoleViews, setMemberRole,
 } from "@/app/actions/admin";
 import { AutoSubmitSelect, ConfirmButton } from "@/components/AutoSubmit";
 import { Flash } from "@/components/Flash";
@@ -8,13 +8,14 @@ import { PAL_NAMES, SHAPES, Shape } from "@/components/ui";
 import { loadLookups } from "@/lib/data";
 import { FIELD_KEYS, PERMISSIONS, VIEWS } from "@/lib/fields";
 import { displayName } from "@/lib/project";
+import { sys } from "@/lib/db";
 import { asViewer, requirePerm } from "@/lib/viewer";
 
 export const metadata = { title: "Тохиргоо" };
 
 const TABS = [
   ["statuses", "Явцын төлөв"], ["roles", "Түвшин, эрх"], ["fields", "Талбарын эрх"], ["members", "Гишүүдийн түвшин"],
-  ["deedes", "Дээдэс"], ["lists", "Жагсаалтууд"], ["questions", "Формын асуулт"],
+  ["deedes", "Дээдэс"], ["lists", "Жагсаалтууд"], ["questions", "Формын асуулт"], ["grants", "Өргөө хоорондын эрх"],
 ] as const;
 const QTYPES = [["text", "Богино бичвэр"], ["longtext", "Урт бичвэр"], ["yesno", "Тийм / Үгүй"], ["choice", "Сонголт"], ["date", "Огноо"]];
 
@@ -59,6 +60,11 @@ export default async function Settings({ searchParams }: { searchParams: Promise
       : [],
   }));
   const { lk } = d;
+  // Өргөөний нэрс нууц биш; апп-ын role зөвхөн өөрийн өргөөг хардаг тул жагсаалтыг системийн холболтоор авна.
+  const others = tab === "grants" ? await sys<{ id: string; name: string }>("SELECT id, name FROM urguu WHERE state = 'active' AND id <> $1 ORDER BY created_at", [v.urguu.id]) : [];
+  const grants = tab === "grants" ? await asViewer(v, (q) => q<{ owner_urguu_id: string; grantee_urguu_id: string }>("SELECT owner_urguu_id, grantee_urguu_id FROM cross_urguu_grant")) : [];
+  const given = new Set(grants.filter((g) => g.owner_urguu_id === v.urguu.id).map((g) => g.grantee_urguu_id));
+  const received = new Set(grants.filter((g) => g.grantee_urguu_id === v.urguu.id).map((g) => g.owner_urguu_id));
   const has = new Set(d.perms.map((p) => `${p.role_id}:${p.key}`));
   const fhas = new Set(d.fperms.map((p) => `${p.field_key}:${p.role_id}`));
   const vhas = new Set(d.rviews.map((p) => `${p.role_id}:${p.view}`));
@@ -216,6 +222,26 @@ export default async function Settings({ searchParams }: { searchParams: Promise
             </form>
           ))}
         </div>
+      ) : null}
+
+      {tab === "grants" ? (
+        <form action={saveGrants} className="card p0">
+          <div className="col g4" style={{ padding: "16px 16px 8px" }}>
+            <h2>Өргөө хоорондын харах эрх</h2>
+            <span className="small muted">
+              Чагталсан өргөөний «Дэлхийн үрс харах» эрхтэй гишүүд {v.urguu.name}-ийн бүртгэлтэй хүмүүсийн нэр, явцын төлөв, онгодыг харна.
+              Утас, имэйл, тэмдэглэл зэрэг нууц талбар өргөө дамжиж хэзээ ч харагдахгүй.
+            </span>
+          </div>
+          {others.length ? others.map((u) => (
+            <label key={u.id} className="list-item" style={{ minHeight: 52, cursor: "pointer" }}>
+              <input type="checkbox" name="grantee" value={u.id} defaultChecked={given.has(u.id)} style={{ width: 18, height: 18, accentColor: "var(--pri)" }} />
+              <span style={{ flex: 1, fontWeight: 600 }}>{u.name}</span>
+              {received.has(u.id) ? <span className="chip ok" style={{ height: 22 }}>Тэд бидэнд харуулдаг</span> : null}
+            </label>
+          )) : <div className="empty"><b>Өөр өргөө алга</b><span>Платформд өөр идэвхтэй өргөө үүсэхэд энд гарна.</span></div>}
+          {others.length ? <div style={{ padding: 16 }}><button className="btn pri">Хадгалах</button></div> : null}
+        </form>
       ) : null}
     </>
   );

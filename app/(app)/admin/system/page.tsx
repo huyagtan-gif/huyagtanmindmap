@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { retryOutbox } from "@/app/actions/system";
+import { assignUrguuAdmin, createUrguuAction, retryOutbox, saveUrguu, setUrguuState } from "@/app/actions/system";
+import { ConfirmButton } from "@/components/AutoSubmit";
 import { Flash } from "@/components/Flash";
 import { Empty } from "@/components/ui";
 import { fmtDateTime } from "@/lib/audit-text";
@@ -11,7 +12,7 @@ import { requirePlatformAdmin } from "@/lib/viewer";
 
 export const metadata = { title: "Систем" };
 
-const TABS = [["outbox", "Мэдэгдэл"]] as const;
+const TABS = [["urguu", "Өргөөнүүд"], ["outbox", "Мэдэгдэл"]] as const;
 const TEMPLATE: Record<string, string> = {
   magic_link: "Нэвтрэх холбоос", invite: "Урилга", admin_new_request: "Админд: шинэ хүсэлт", membership_approved: "Бүртгэл батлагдсан",
   membership_rejected: "Бүртгэл татгалзсан", otp_login: "SMS код (нэвтрэх)", otp_verify: "SMS код (утас баталгаажуулах)",
@@ -23,7 +24,7 @@ type Out = { id: string; channel: string; recipient: string; template: string; s
 export default async function System({ searchParams }: { searchParams: Promise<{ tab?: string; m?: string }> }) {
   const v = await requirePlatformAdmin();
   const sp = await searchParams;
-  const tab = TABS.some(([k]) => k === sp.tab) ? sp.tab! : "outbox";
+  const tab = TABS.some(([k]) => k === sp.tab) ? sp.tab! : "urguu";
   const rows = await sys<Out>(
     `SELECT id, channel, recipient, template, state, attempts, last_error, created_at, sent_at, next_attempt_at, (payload ? 'body' OR payload ? 'text') AS retryable
      FROM notification_outbox ORDER BY id DESC LIMIT 100`);
@@ -31,6 +32,18 @@ export default async function System({ searchParams }: { searchParams: Promise<{
     `SELECT count(*) FILTER (WHERE state = 'queued')::int AS queued, count(*) FILTER (WHERE state = 'failed')::int AS failed,
             count(*) FILTER (WHERE state = 'sent' AND sent_at > now() - interval '7 days')::int AS sent FROM notification_outbox`);
   const rt = realtimeStats();
+  const urguus = tab === "urguu"
+    ? await sys<{ id: string; name: string; description: string | null; state: string; created_at: Date; members: number; pending: number; ongods: number; admins: string | null }>(
+        `SELECT u.id, u.name, u.description, u.state, u.created_at,
+           (SELECT count(*)::int FROM membership m WHERE m.urguu_id = u.id AND m.state = 'approved') AS members,
+           (SELECT count(*)::int FROM membership m WHERE m.urguu_id = u.id AND m.state = 'pending') AS pending,
+           (SELECT count(*)::int FROM ongod o WHERE o.urguu_id = u.id) AS ongods,
+           (SELECT string_agg(coalesce(left(p.father_name, 1) || '.', '') || p.given_name, ', ' ORDER BY p.given_name)
+              FROM membership m JOIN person p ON p.id = m.person_id JOIN role r ON r.id = m.role_id
+              WHERE m.urguu_id = u.id AND m.state = 'approved' AND NOT r.is_system
+                AND EXISTS (SELECT 1 FROM permission pm WHERE pm.role_id = r.id AND pm.key = 'settings.manage')) AS admins
+         FROM urguu u ORDER BY u.created_at`)
+    : [];
   return (
     <>
       <div className="pagehead"><div><div className="crumb">Платформ · {v.personName}</div><h1>Систем</h1></div></div>
@@ -82,6 +95,58 @@ export default async function System({ searchParams }: { searchParams: Promise<{
               </div>
             ) : <Empty title="Мэдэгдэл алга" />}
           </div>
+        </>
+      ) : null}
+      {tab === "urguu" ? (
+        <>
+          {urguus.map((u) => (
+            <div className="card col g12" key={u.id}>
+              <div className="row wrap between">
+                <div className="row wrap" style={{ gap: 8 }}>
+                  <h2>{u.name}</h2>
+                  <span className={`chip ${u.state === "active" ? "ok" : "bad"}`} style={{ height: 22 }}>{u.state === "active" ? "Идэвхтэй" : "Хаагдсан"}</span>
+                  {u.id === v.urguu.id ? <span className="chip pri" style={{ height: 22 }}>Одоо энд</span> : null}
+                </div>
+                <span className="small muted num">{u.members} гишүүн · {u.pending} хүлээгдэж буй · {u.ongods} онгодын зангилаа</span>
+              </div>
+              <span className="small"><span className="muted">Админ: </span>{u.admins || <span className="muted">томилогдоогүй</span>}</span>
+              <form action={saveUrguu} className="row wrap" style={{ alignItems: "flex-end" }}>
+                <input type="hidden" name="id" value={u.id} />
+                <label className="field" style={{ flex: "1 1 180px" }}><span className="tiny muted">Нэр</span><input className="inp sm" name="name" required defaultValue={u.name} maxLength={120} /></label>
+                <label className="field" style={{ flex: "2 1 220px" }}><span className="tiny muted">Тайлбар</span><input className="inp sm" name="description" defaultValue={u.description || ""} maxLength={500} /></label>
+                <button className="btn sm">Хадгалах</button>
+                <input type="hidden" name="state" value={u.state === "active" ? "closed" : "active"} />
+                {u.state === "active"
+                  ? <ConfirmButton className="btn sm danger" formAction={setUrguuState} message={`«${u.name}» өргөөг хаах уу? Өгөгдөл хадгалагдана, гэхдээ гишүүд нь нэвтэрч харах боломжгүй болно.`}>Хаах</ConfirmButton>
+                  : <button className="btn sm soft" formAction={setUrguuState}>Дахин нээх</button>}
+              </form>
+              {u.state === "active" ? (
+                <form action={assignUrguuAdmin} className="row wrap" style={{ alignItems: "flex-end" }}>
+                  <input type="hidden" name="urguu_id" value={u.id} />
+                  <label className="field" style={{ flex: "1 1 240px" }}><span className="tiny muted">Админ томилох (имэйлээр)</span><input className="inp sm" type="email" name="email" required placeholder="admin@example.com" maxLength={254} /></label>
+                  <button className="btn sm soft">Томилох</button>
+                  <span className="tiny muted" style={{ flexBasis: "100%" }}>Бүртгэлтэй хүн бол шууд админ болно. Бүртгэлгүй бол 7 хоногийн урилга очно.</span>
+                </form>
+              ) : null}
+            </div>
+          ))}
+          <form action={createUrguuAction} className="card col g12">
+            <div className="col g4"><h2>Шинэ өргөө үүсгэх</h2><span className="small muted">Түвшин, үйлдлийн эрх, харагдац, талбарын эрх, дээдсийн жагсаалт загвар өргөөнөөс хуулагдана. Хүмүүс хуулагдахгүй.</span></div>
+            <div className="formgrid">
+              <label className="field"><span>Нэр <span className="req">*</span></span><input className="inp" name="name" required maxLength={120} /></label>
+              <label className="field">Тайлбар<input className="inp" name="description" maxLength={500} /></label>
+              <label className="field">Тохиргооны загвар
+                <select className="inp" name="template_id" defaultValue={urguus[0]?.id}>{urguus.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
+              </label>
+              <label className="field">Онгодын мод
+                <select className="inp" name="ongod_from" defaultValue="">
+                  <option value="">Хоосноор эхлэх</option>
+                  {urguus.map((u) => <option key={u.id} value={u.id}>{u.name}-ийн модыг хуулах ({u.ongods})</option>)}
+                </select>
+              </label>
+            </div>
+            <div><button className="btn pri">Өргөө үүсгэх</button></div>
+          </form>
         </>
       ) : null}
     </>
