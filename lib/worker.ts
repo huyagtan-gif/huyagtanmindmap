@@ -2,6 +2,7 @@ import { processOutbox } from "./outbox";
 import { purgeOtps } from "./otp";
 import { logError, purgeErrors } from "./errors";
 import { sendReminders } from "./reminders";
+import { purgePush } from "./push";
 import { dailyReconciliation, reconcilePending } from "./payments";
 
 // Дэвсгэр ажилчин: нэг процесс, минут тутам. Outbox-ын хугацаа болсон мэдэгдлийг илгээнэ, хуучин кодыг цэвэрлэнэ.
@@ -24,6 +25,7 @@ export function startWorker() {
       if (n++ % 60 === 0) {
         await purgeOtps();
         await purgeErrors();
+        await purgePush();
       }
     } catch (e) {
       console.error("[worker]", e instanceof Error ? e.message : e);

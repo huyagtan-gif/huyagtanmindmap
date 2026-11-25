@@ -150,6 +150,123 @@ SMS код логт бичигдэнэ: `sudo journalctl -u huyagtan-staging | g
 Нэмэлт тохиргоо шаардахгүй: апп `/api/events` хаягаар SSE холболт нээх ба Nginx-ийн одоогийн тохиргоогоор дамжина
 (хариу `X-Accel-Buffering: no` толгойтой, 25 секунд тутам дохио явуулдаг тул холболт тасрахгүй).
 
+## Phase 3: үйл ажиллагаа, сургалт
+
+Нэмэлт тохиргоо шаардахгүй (миграци deploy-оор автоматаар орно).
+
+- **Үйлийн төрөл, үүрэг** болон сургалтын ангилал: **Тохиргоо → Үйл, сургалт**. Шинэ өргөө үүсгэхэд загвараас хуулагдана.
+- **Нийтийн бүртгэл**: сургалтыг «Олон нийтэд нээлттэй» болговол `https://huyagtan.mn/t/<код>` холбоос гарна.
+  Зочин утсаараа SMS код авч баталгаажуулна, тиймээс SMS гарц (Phase 2) тохируулсан байх хэрэгтэй.
+  SMS тохируулаагүй үед код серверийн логт бичигдэнэ (`journalctl -u huyagtan | grep sms:dev`).
+- **QR ирц**: сургалтын хичээл бүрийн «QR» товч дэлгэцэнд QR харуулна, 15 минут тутам шинэчлэгдэнэ.
+- **Сануулга**: үйл, хичээл эхлэхээс 24 цагийн өмнө оролцогчдод имэйл (push асаасан бол push) автоматаар очно.
+
+## Phase 4: QPay төлбөр, хандив
+
+1. **Шифрлэх түлхүүр** (нэг удаа): `.env`-д `PAYMENT_SECRET=$(openssl rand -base64 32)` нэмж `sudo systemctl restart huyagtan`.
+   Энэ утгыг **хэзээ ч солихгүй**, нөөц нууц үгийн менежерт хадгална: солибол хадгалсан QPay нууц үг тайлагдахгүй болж дахин оруулах шаардлагатай.
+   (Тохируулаагүй бол `AUTH_SECRET` ашиглагдана.)
+2. **QPay merchant**: QPay-ээс (qpay.mn → Merchant) гэрээ байгуулж **username, password, invoice code** авна.
+3. Апп дотор **Санхүү → QPay тохиргоо** дээр гурвыг оруулж «Холболт шалгах» дарна. Өргөө бүр өөрийн merchant-тай байж болно.
+   Нууц үг DB-д AES-256-GCM-ээр шифрлэгдэж хадгалагдах ба өөрчлөлтийн түүхэнд бичигдэхгүй.
+4. **Callback**: апп нэхэмжлэх бүрт `https://huyagtan.mn/api/qpay/callback?...` хаягийг автоматаар өгнө (`AUTH_URL`-аас).
+   Сайт HTTPS-ээр интернэтээс нээгддэг байх ёстой. Callback-д итгэхгүй: апп QPay-ээс төлбөрийг дахин шалгаж байж «Төлсөн» болгоно.
+   Callback ирээгүй ч 15 минут тутам хүлээгдэж буй нэхэмжлэхийг шалгана, шөнө бүр 02:00-д өдрийн тулгалт хийнэ.
+5. **Буцаалт** QPay API-аар зөвхөн картын төлбөрт боломжтой тул мөнгийг банкаар буцааж, апп дотор «Буцаасан» гэж тэмдэглэнэ.
+
+Туршилт: staging-д `.env`-д `QPAY_MOCK=1` тавибал жинхэнэ QPay-гүйгээр төлбөрийн бүх урсгалыг туршина
+(«Mock: төлсөн болгох» товч гарна). Production-д (`APP_ENV` хоосон) mock ажиллахгүй.
+
+## Phase 5: сертификат, PWA, push, англи хэл
+
+### Сертификат
+
+Сургалтын оролцогчийг «Дүүргэсэн» болгоход `ХТ-2026-00001` маягийн дугаар автоматаар олгогдоно (дахин олгоход хэвээр).
+Сертификатыг `https://huyagtan.mn/certificate/<код>` хаягаар хэн ч шалгаж, хэвлэж (PDF болгож) болно.
+Хуудсанд нэр, сургалт, хугацаа, багш л харагдана: утас, имэйл зэрэг хувийн мэдээлэл гарахгүй.
+
+### Апп болгон суулгах (PWA)
+
+Тохиргоо шаардахгүй. Утасны хөтчөөр сайтыг нээгээд **Add to Home screen / Нүүр дэлгэцэнд нэмэх** дарна.
+Service worker зөвхөн статик файл (JS, CSS, зураг) ба офлайн хуудсыг кэшлэнэ: хувийн мэдээлэлтэй хуудас төхөөрөмж дээр хадгалагдахгүй.
+
+### Push мэдэгдэл
+
+1. VAPID түлхүүр үүсгэнэ (нэг удаа, өөрийн компьютер эсвэл сервер дээр): `node scripts/vapid.mjs`
+2. Гарсан гурван мөрийг `.env`-д нэмнэ:
+
+```bash
+VAPID_PUBLIC_KEY=...
+VAPID_PRIVATE_KEY=...
+VAPID_SUBJECT=https://huyagtan.mn          # эсвэл mailto:холбоо-барих@huyagtan.mn
+```
+
+3. `sudo systemctl restart huyagtan`. Гишүүд **Миний мэдээлэл → Push мэдэгдэл → Асаах** дарж зөвшөөрнө.
+
+Push нь хоосон дохио: мэдэгдлийн агуулга Google, Apple, Mozilla-гийн push үйлчилгээгээр дамжихгүй, утас нь апп-аас өөрөө татна (A3).
+iPhone дээр push зөвхөн нүүр дэлгэцэнд нэмсэн (PWA) үед ажиллана (iOS 16.4+). Түлхүүрийг солибол бүх хүн дахин асаах шаардлагатай.
+
+### Англи хэл (D13)
+
+Нэвтрэх, бүртгүүлэх, нийтийн сургалтын бүртгэл, QR ирц, хандив, төлбөрийн хуудас болон үндсэн цэс англиар харагдана
+(хуудасны доод хэсэг эсвэл **Миний мэдээлэл → Хэл**). Удирдлагын дэлгэцүүд одоогоор монголоор үлдэнэ.
+Орчуулга `lib/i18n-en.ts`-д: монгол мөр нь өөрөө түлхүүр. Шинэ хэл нэмэхдээ `lib/i18n-core.ts`-ийн `LANGS`-д нэмж,
+`lib/i18n-<код>.ts` толь үүсгэнэ. Дутуу орчуулгыг `node scripts/i18n-keys.mjs --missing` харуулна, тест ч шалгана.
+
+### Сервер өргөтгөх (2 GB+ RAM)
+
+**Хэзээ:** `free -m`-д swap байнга 300 MB-аас их ашиглагдаж байвал, хуудас 1 секундээс удаан нээгдэж эхэлбэл, эсвэл гишүүд 1000 давбал.
+
+1. VPS-ийн хяналтын самбараас төлөвлөгөөг 2 GB (эсвэл 4 GB) RAM руу өсгөнө (ихэнх үйлчилгээнд дахин асаахад л болно).
+2. Серверт: `sudo bash setup-db.sh` дахин ажиллуулна. Скрипт RAM-ийг илрүүлж PostgreSQL-ийн санах ой
+   (`shared_buffers`, `effective_cache_size`, `work_mem`, холболтын тоо), апп-ын `NODE_OPTIONS`, `PG_POOL_MAX`-ыг тааруулна.
+   Гараар өөрчилсөн утгыг хөндөхгүй. Дараа нь `sudo systemctl restart huyagtan`.
+
+| RAM | PostgreSQL shared_buffers / cache | max_connections | Апп heap | PG_POOL_MAX |
+|---|---|---|---|---|
+| 1 GB | 128 MB / 256 MB | 20 | 384 MB | 6 |
+| 2 GB | 512 MB / 1.5 GB | 40 | 640 MB | 10 |
+| 4 GB | 1 GB / 3 GB | 60 | 1 GB | 15 |
+
+2 GB-аас дээш болсны дараа staging-ийг байнга асаалттай байлгаж болно.
+
+**Унших реплика (read replica)**, 4 GB-аас цааш хэрэгтэй болбол: хоёр дахь VPS дээр PostgreSQL 16 суулгаж streaming replication тохируулна.
+
+```bash
+# Үндсэн сервер: реплика хэрэглэгч, сүлжээ
+sudo -u postgres psql -c "CREATE ROLE replicator REPLICATION LOGIN PASSWORD 'урт-нууц-үг'"
+echo "listen_addresses = 'localhost,ҮНДСЭН_ДОТООД_IP'" | sudo tee /etc/postgresql/16/main/conf.d/replica.conf
+echo "host replication replicator РЕПЛИКА_IP/32 scram-sha-256" | sudo tee -a /etc/postgresql/16/main/pg_hba.conf
+sudo ufw allow from РЕПЛИКА_IP to any port 5432 && sudo systemctl restart postgresql
+# Реплика сервер: хоосон сан дээр үндсэнээс хуулж, standby горимоор асаана
+sudo systemctl stop postgresql && sudo rm -rf /var/lib/postgresql/16/main
+sudo -u postgres pg_basebackup -h ҮНДСЭН_ДОТООД_IP -U replicator -D /var/lib/postgresql/16/main -R -X stream -P
+sudo systemctl start postgresql
+sudo -u postgres psql -c "SELECT pg_is_in_recovery()"     # t гарвал реплика ажиллаж байна
+```
+
+Реплика зөвхөн уншина: тайлан, экспорт, BI хэрэгсэл, нөөцлөлтийг (`backup.sh`-ийн `DATABASE_URL`-ийг реплика руу) тийш шилжүүлж үндсэн серверийн ачааллыг бууруулна.
+RLS, role-ууд хамт хуулагдана. Апп өөрөө одоогоор бүх хүсэлтийг үндсэн сан руу илгээдэг.
+Апп-ын уншилтыг реплика руу чиглүүлэх нь тусдаа ажил: бичсэн даруйдаа уншдаг хуудсууд хоцрогдол харуулахаас сэргийлэх шаардлагатай.
+
+**CDN (Cloudflare, үнэгүй)**: статик файлыг ойрын серверээс өгч, DDoS-оос хамгаална.
+
+1. cloudflare.com дээр `huyagtan.mn` домэйн нэмж, домэйн бүртгэгч дээрээ nameserver-ийг Cloudflare-ийнх болгоно.
+2. DNS: `huyagtan.mn`, `www`, `staging` бичлэгүүдийг **Proxied** (улбар шар үүл) болгоно.
+3. **SSL/TLS → Full (strict)** (certbot-ын сертификат хэвээр ажиллана).
+4. **Caching → Cache Rules**: `URI Path starts with /_next/static/` → Eligible for cache, Edge TTL 1 жил.
+   Бусад бүх хаягийг кэшлэхгүй (анхдагчаар Cloudflare HTML-ийг кэшлэдэггүй). `/api/*`, `/sw.js`-ийг кэшлэхгүй.
+5. Жинхэнэ IP (оролдлогын хязгаар зөв ажиллахад): серверт
+
+```bash
+curl -s https://www.cloudflare.com/ips-v4 https://www.cloudflare.com/ips-v6 | sed 's/.*/set_real_ip_from &;/' | sudo tee /etc/nginx/conf.d/cloudflare.conf
+echo 'real_ip_header CF-Connecting-IP;' | sudo tee -a /etc/nginx/conf.d/cloudflare.conf
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Realtime (`/api/events`) Cloudflare-аар дамжина: апп 25 секунд тутам дохио явуулдаг тул 100 секундын хязгаарт хүрэхгүй.
+QPay callback ч Cloudflare-аар орно: **Security → Bots**-ийн «Bot Fight Mode»-ийг асаавал `/api/qpay/callback`-ийг үл хамаарах дүрэмд нэмнэ.
+
 ## Нөөцлөлт (шөнө бүр → Google Drive «Mindmap/backups»)
 
 Шөнө бүр 03:00 (Улаанбаатар)-д `pg_dump` → `age`-ээр шифрлэнэ → `rclone`-оор Drive руу хуулна, 30 хоногоос хуучныг устгана.

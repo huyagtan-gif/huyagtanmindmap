@@ -24,7 +24,7 @@ import { asViewer, requireMember } from "@/lib/viewer";
 export const metadata = { title: "Сургалт" };
 
 type Sess = { id: string; title: string | null; starts_at: Date; ends_at: Date | null; place: string | null; qr_open: boolean; n: number };
-type Part = { id: string; person_id: string; state: string; source: string; completion: string | null; pay_state: string; father_name: string | null; given_name: string; is_registered: boolean; phone?: string | null; certificate_no?: string | null };
+type Part = { id: string; person_id: string; state: string; source: string; completion: string | null; pay_state: string; father_name: string | null; given_name: string; is_registered: boolean; phone?: string | null; certificate_no?: string | null; certificate_code?: string | null };
 type SP = { tab?: string; m?: string; role?: string; st?: string; kn?: string; prev?: string; f?: string };
 
 export default async function TrainingPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<SP> }) {
@@ -229,7 +229,7 @@ export default async function TrainingPage({ params, searchParams }: { params: P
                           const on = att.has(`${s.id}:${p.person_id}`);
                           return <td key={s.id} style={{ textAlign: "center" }}><ActBtn action={toggleAttendance} fields={{ training_id: t.id, session_id: s.id, person_id: p.person_id }} className={`att${on ? " on" : ""}`} pressed={on} label={`${nm} · ${ubDay(s.starts_at)}`}>{on ? <Icon n="check" s={14} w={2.6} /> : null}</ActBtn></td>;
                         })}
-                        <td>{p.completion === "completed" ? <span className="chip ok">Дүүргэсэн</span> : p.completion === "incomplete" ? <span className="chip">Дутуу</span> : <span className="muted">—</span>}{p.certificate_no ? <div className="tiny muted num">{p.certificate_no}</div> : null}</td>
+                        <td>{p.completion === "completed" ? <span className="chip ok">Дүүргэсэн</span> : p.completion === "incomplete" ? <span className="chip">Дутуу</span> : <span className="muted">—</span>}{p.certificate_no && p.certificate_code && p.completion === "completed" ? <div className="tiny num"><a href={`/certificate/${p.certificate_code}`} target="_blank" rel="noopener noreferrer">{p.certificate_no}</a></div> : null}</td>
                       </tr>
                     );
                   })}

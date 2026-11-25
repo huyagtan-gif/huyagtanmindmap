@@ -1,7 +1,9 @@
 # Хуягтан Mind Map
 
 Хуягтан өргөөний бүртгэл, онгодын mind map. https://huyagtan.mn дээр ажиллана.
-Шаардлага: «Хуягтан Mind Map систем: Шаардлага v2.0». Энэ репо Phase 1 (MVP) ба Phase 2-ыг агуулна.
+Шаардлага: «Хуягтан Mind Map систем: Шаардлага v2.0». Энэ репо Phase 1 (MVP)-ээс Phase 5 хүртэлх бүх үе шатыг агуулна:
+үйл ажиллагаа, сургалт, QR ирц, нийтийн бүртгэл (Phase 3), QPay төлбөр, хандив, санхүүгийн тайлан (Phase 4),
+сертификат, PWA, push мэдэгдэл, англи хэл, сервер өргөтгөх заавар (Phase 5).
 
 ## Технологи
 
@@ -26,6 +28,13 @@
 | `lib/urguu.ts` | Өргөө үүсгэх/хуулах, өргөө хоорондын эрх, «Дэлхийн үрс» (P2.4, P2.5) |
 | `lib/privacy.ts`, `lib/xlsx.ts`, `components/mapExport.ts` | Өгөгдлөө татах/устгуулах, Excel, PNG/PDF экспорт (P2.6, P2.8) |
 | `lib/errors.ts`, `instrumentation.ts` | Алдааны хяналт (P2.9) |
+| `lib/events.ts`, `lib/training.ts`, `lib/public.ts` | Үйл, сургалт, хүлээлгийн жагсаалт, QR ирц, зочны бүртгэл (Phase 3) |
+| `lib/reminders.ts` | 24 цагийн өмнөх сануулга (P3.9) |
+| `lib/qpay.ts`, `lib/payments.ts`, `lib/finance.ts`, `lib/secret.ts` | QPay, төлбөр, тулгалт, санхүүгийн тайлан, нууц үг шифрлэлт (Phase 4) |
+| `app/certificate/`, `migrations/010_phase5.sql` | Сертификат: дугаарлалт, нийтийн шалгах хуудас (Phase 5) |
+| `lib/push.ts`, `public/sw.js`, `app/manifest.ts` | PWA, Web Push (VAPID, агуулгагүй дохио) (Phase 5) |
+| `lib/i18n*.ts`, `components/LangSwitch.tsx` | Олон хэл: монгол мөр = түлхүүр, англи толь (D13) |
+| `app/t/`, `app/e/`, `app/a/` | Нийтийн сургалтын бүртгэл, хандив, QR ирцийн хуудас (нэвтрэлтгүй) |
 | `app/(app)/` | Mind map, Хүмүүс, Миний мэдээлэл, Админ самбар |
 | `app/actions/` | Server actions (бүх бичих үйлдэл, эрх шалгалттай) |
 | `deploy/` | Серверийн тохиргоо, нөөцлөлт: [deploy/README.md](deploy/README.md) |
@@ -41,6 +50,8 @@ npm run dev
 ```
 
 `EMAIL_SERVER` хоосон үед нэвтрэх холбоос терминалд (`[mail:dev] ... link=`) хэвлэгдэнэ.
+Төлбөрийг жинхэнэ QPay-гүйгээр турших бол `.env.local`-д `QPAY_MOCK=1`, `APP_ENV=local`.
+Push турших бол `node scripts/vapid.mjs`-ийн гаралтыг `.env.local`-д нэмнэ (push зөвхөн localhost эсвэл HTTPS дээр ажиллана).
 
 ## Тест
 

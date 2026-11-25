@@ -2,15 +2,16 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AuthFrame } from "@/components/AuthFrame";
 import { loginSmsVerify } from "@/app/actions/auth";
+import { getT, N, tMeta } from "@/lib/i18n";
 import { smsMode } from "@/lib/sms";
 import { getViewer } from "@/lib/viewer";
 
-export const metadata = { title: "SMS кодоор нэвтрэх" };
+export const generateMetadata = tMeta("SMS кодоор нэвтрэх");
 export const dynamic = "force-dynamic";
 
 const ERR: Record<string, string> = {
-  code: "Код буруу эсвэл хугацаа нь дууссан байна. Дахин оролдоно уу.",
-  rate: "Хэт олон оролдлого хийлээ. 15 минутын дараа дахин оролдоно уу.",
+  code: N("Код буруу эсвэл хугацаа нь дууссан байна. Дахин оролдоно уу."),
+  rate: N("Хэт олон оролдлого хийлээ. 15 минутын дараа дахин оролдоно уу."),
 };
 
 export default async function LoginSms({ searchParams }: { searchParams: Promise<{ phone?: string; next?: string; e?: string }> }) {
@@ -18,20 +19,21 @@ export default async function LoginSms({ searchParams }: { searchParams: Promise
   const next = sp.next && sp.next.startsWith("/") && !sp.next.startsWith("//") ? sp.next : "/";
   if (await getViewer()) redirect(next);
   if (smsMode() === "off" || !sp.phone) redirect("/login");
+  const t = await getT();
   return (
-    <AuthFrame title="Кодоо оруулна уу" sub={<>Хэрэв <b className="num">{sp.phone}</b> дугаар баталгаажсан гишүүнийх бол SMS-ээр 6 оронтой код очсон. Код 5 минут хүчинтэй.</>}>
-      {sp.e ? <div className="banner bad" role="alert">{ERR[sp.e] || ERR.code}</div> : null}
+    <AuthFrame title={t("Кодоо оруулна уу")} sub={t.rich("Хэрэв {phone} дугаар баталгаажсан гишүүнийх бол SMS-ээр 6 оронтой код очсон. Код 5 минут хүчинтэй.", { phone: <b className="num">{sp.phone}</b> })}>
+      {sp.e ? <div className="banner bad" role="alert">{t(ERR[sp.e] || ERR.code)}</div> : null}
       <form action={loginSmsVerify} className="col g12">
         <input type="hidden" name="next" value={next} />
         <input type="hidden" name="phone" value={sp.phone} />
         <label className="field">
-          Код
+          {t("Код")}
           <input className="inp num" name="code" required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 ]{6,7}" maxLength={7} placeholder="000000" autoFocus style={{ fontSize: 22, letterSpacing: ".3em", textAlign: "center" }} />
         </label>
-        <button className="btn pri lg" type="submit">Нэвтрэх</button>
+        <button className="btn pri lg" type="submit">{t("Нэвтрэх")}</button>
       </form>
       <span className="small muted">
-        Код ирээгүй юу? Утсаа баталгаажуулаагүй бол <Link href="/login">имэйлийн холбоосоор</Link> нэвтэрч, «Миний мэдээлэл» хэсгээс баталгаажуулна уу.
+        {t.rich("Код ирээгүй юу? Утсаа баталгаажуулаагүй бол {link} нэвтэрч, «Миний мэдээлэл» хэсгээс баталгаажуулна уу.", { link: <Link href="/login">{t("имэйлийн холбоосоор")}</Link> })}
       </span>
     </AuthFrame>
   );

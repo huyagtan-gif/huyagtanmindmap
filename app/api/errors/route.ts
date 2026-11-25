@@ -9,7 +9,7 @@ export async function POST(req: Request) {
   const origin = req.headers.get("origin");
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host");
   if (!origin || !host || new URL(origin).host !== host) return new Response(null, { status: 403 });
-  const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || req.headers.get("x-real-ip") || "local";
+  const ip = req.headers.get("x-real-ip") || (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || "local";
   if (!rateLimit(`cerr:${ip}`, 10, 10 * 60_000)) return new Response(null, { status: 429 });
   const raw = await req.text();
   if (raw.length > 8000) return new Response(null, { status: 413 });

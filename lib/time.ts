@@ -20,11 +20,13 @@ export const localInput = (d: Date | string | null | undefined) => (d ? sv(d, { 
 export const ubDay = (d: Date | string) => sv(d, { dateStyle: "short" });
 /** "09:00" */
 export const fmtTime = (d: Date | string) => sv(d, { timeStyle: "short" });
-/** "12-р сарын 21, Даваа" */
-export function fmtDay(d: Date | string): string {
+const WEEKDAY_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "12-р сарын 21, Даваа" (lang="en" бол "Mon, Dec 21") */
+export function fmtDay(d: Date | string, lang: "mn" | "en" = "mn"): string {
   const [y, m, day] = ubDay(d).split("-").map(Number);
   const wd = new Date(Date.UTC(y, m - 1, day)).getUTCDay();
-  return `${m}-р сарын ${day}, ${WEEKDAY_FULL[wd]}`;
+  return lang === "en" ? `${WEEKDAY_EN[wd]}, ${MONTH_EN[m - 1]} ${day}` : `${m}-р сарын ${day}, ${WEEKDAY_FULL[wd]}`;
 }
 /** "2026-12-21 09:00" эсвэл "2026-12-21 09:00–11:30" */
 export function fmtRange(start: Date | string, end?: Date | string | null): string {

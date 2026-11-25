@@ -2,6 +2,7 @@ import { markPaidManual, payTraining, payTrainingGuest, refundPayment } from "@/
 import { ActBtn } from "@/components/ActBtn";
 import { CheckAll } from "@/components/CheckAll";
 import { PayBox } from "@/components/PayBox";
+import { getT } from "@/lib/i18n";
 import { Empty } from "@/components/ui";
 import { sys } from "@/lib/db";
 import { PAYMENT_STATE, type Payment } from "@/lib/payments";
@@ -27,11 +28,12 @@ export async function TrainingPay({ trainingId, participantId, payState, fee }: 
 /** Зочны төлбөрийн хэсэг (нийтийн бүртгэлийн нууц холбоосоор). */
 export async function GuestPay({ code, token, participantId, payState, fee }: { code: string; token: string; participantId: string; payState: string; fee: number }) {
   if (fee <= 0 || payState !== "pending") return null;
+  const t = await getT();
   const [{ urguu_id }] = await sys<{ urguu_id: string }>("SELECT t.urguu_id FROM training_participant tp JOIN training t ON t.id = tp.training_id WHERE tp.id = $1", [participantId]);
-  if (!(await paymentsEnabled(urguu_id))) return <span className="small muted">Төлбөрөө зохион байгуулагчид бэлнээр эсвэл дансаар төлнө үү.</span>;
+  if (!(await paymentsEnabled(urguu_id))) return <span className="small muted">{t("Төлбөрөө зохион байгуулагчид бэлнээр эсвэл дансаар төлнө үү.")}</span>;
   const p = await pendingOf(participantId);
   if (p) return <PayBox p={p} back={`/t/${code}/r/${token}`} />;
-  return <ActBtn action={payTrainingGuest} fields={{ code, token }} className="btn pri">QPay-ээр {money(fee)} төлөх</ActBtn>;
+  return <ActBtn action={payTrainingGuest} fields={{ code, token }} className="btn pri">{t("QPay-ээр {amount} төлөх", { amount: money(fee) })}</ActBtn>;
 }
 
 /** Удирдагчийн «Төлбөр» таб: оролцогчдын төлбөрийн төлөв, гараар тэмдэглэх, буцаалт. */

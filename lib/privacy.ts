@@ -24,7 +24,7 @@ export async function exportOwnData(personId: string) {
     status_history: await all("SELECT os.name AS from_status, ns.name AS to_status, h.at FROM status_history h LEFT JOIN status os ON os.id = h.old_status_id LEFT JOIN status ns ON ns.id = h.new_status_id WHERE h.person_id = $1 ORDER BY h.at"),
     events: await all("SELECT e.name, e.starts_at, r.name AS role, ep.rsvp, ep.attended FROM event_participant ep JOIN event e ON e.id = ep.event_id LEFT JOIN event_role r ON r.id = ep.role_id WHERE ep.person_id = $1 ORDER BY e.starts_at"),
     trainings: await all(
-      `SELECT t.name, tp.state, tp.source, tp.completion, tp.pay_state, tp.created_at,
+      `SELECT t.name, tp.state, tp.source, tp.completion, tp.certificate_no, tp.pay_state, tp.created_at,
               (SELECT count(*)::int FROM training_attendance ta WHERE ta.training_id = t.id AND ta.person_id = tp.person_id) AS sessions_attended
        FROM training_participant tp JOIN training t ON t.id = tp.training_id WHERE tp.person_id = $1 ORDER BY tp.created_at`),
     training_surveys: await all("SELECT t.name, s.rating, s.comment, s.created_at FROM training_survey s JOIN training t ON t.id = s.training_id WHERE s.person_id = $1 ORDER BY s.created_at"),

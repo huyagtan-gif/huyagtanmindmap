@@ -4,6 +4,10 @@ import { cancelDeletion, requestDeletion } from "@/app/actions/privacy";
 import { ConfirmButton } from "@/components/AutoSubmit";
 import { PersonForm } from "@/components/PersonForm";
 import { MySchedule } from "@/components/Schedule";
+import { LangSwitch } from "@/components/LangSwitch";
+import { PushToggle } from "@/components/Pwa";
+import { getLang } from "@/lib/i18n";
+import { vapidPublicKey } from "@/lib/push";
 import { sys } from "@/lib/db";
 import { smsMode } from "@/lib/sms";
 import { requireMember } from "@/lib/viewer";
@@ -100,6 +104,17 @@ export default async function Me({ searchParams }: { searchParams: Promise<{ e?:
         <span className="small muted">
           {sms ? "Утсаа баталгаажуулбал имэйлийн холбоосоос гадна SMS кодоор нэвтрэх боломжтой болно." : "SMS-ээр баталгаажуулах боломж одоогоор идэвхжээгүй байна."}
         </span>
+        {vapidPublicKey() ? (
+          <div className="col g4" style={{ borderTop: "1px solid var(--line)", paddingTop: 12 }}>
+            <b className="small">Push мэдэгдэл</b>
+            <span className="small muted">Урилга, сануулга, төлбөрийн мэдэгдлийг утас, компьютер дээрээ шууд авна. Мэдэгдлийн агуулга гуравдагч үйлчилгээгээр дамжихгүй.</span>
+            <PushToggle vapidKey={vapidPublicKey()!} />
+          </div>
+        ) : null}
+        <div className="row wrap between" style={{ borderTop: "1px solid var(--line)", paddingTop: 12 }}>
+          <span className="col"><b className="small">Хэл / Language</b><span className="tiny muted">Нэвтрэх, нийтийн хуудас, цэс англиар харагдана.</span></span>
+          <LangSwitch lang={await getLang()} compact />
+        </div>
       </div>
       {myUrguus.length > 1 || joinable.length ? (
         <div className="card col g12" id="urguu">

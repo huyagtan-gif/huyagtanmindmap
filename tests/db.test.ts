@@ -615,4 +615,59 @@ d("өгөгдлийн сан: миграци, RLS, audit, импорт", () => {
     expect(row).toEqual({ payer_person_id: null, payer_name: null, message: null, amount: 3000 });
     expect(await db.sys("SELECT 1 FROM audit_log WHERE before::text LIKE '%Нууц Хандивлагч%' OR after::text LIKE '%Нууц Хандивлагч%'")).toHaveLength(0);
   });
+
+  /* ---------------- Phase 5 ---------------- */
+  it("сертификат: дүүргэхэд дугаар олгоно, дахин дүүргэхэд хэвээр, давхардахгүй (Phase 5)", async () => {
+    const tid = await mkTraining(A);
+    const [p1, p2] = await mkPeople(2);
+    const ids = (await db.sys("INSERT INTO training_participant (training_id, person_id, state) VALUES ($1, $2, 'yes'), ($1, $3, 'yes') RETURNING id", [tid, p1, p2])).map((r) => r.id as string);
+    expect((await db.sys("SELECT certificate_no FROM training_participant WHERE id = $1", [ids[0]]))[0].certificate_no).toBeNull();
+    await db.sys("UPDATE training_participant SET completion = 'completed' WHERE training_id = $1", [tid]);
+    const certs = await db.sys("SELECT certificate_no, certificate_code FROM training_participant WHERE training_id = $1 ORDER BY certificate_no", [tid]);
+    for (const c of certs) {
+      expect(c.certificate_no).toMatch(/^ХТ-\d{4}-\d{5}$/);
+      expect(c.certificate_code).toMatch(/^[0-9a-f]{16}$/);
+    }
+    expect(new Set(certs.map((c) => c.certificate_no)).size).toBe(2);
+    await db.sys("UPDATE training_participant SET completion = 'incomplete' WHERE id = $1", [ids[0]]);
+    await db.sys("UPDATE training_participant SET completion = 'completed' WHERE id = $1", [ids[0]]);
+    const [again] = await db.sys("SELECT certificate_no FROM training_participant WHERE id = $1", [ids[0]]);
+    expect(certs.map((c) => c.certificate_no)).toContain(again.certificate_no);
+  });
+
+  it("push: VAPID JWT гарын үсэг зөв, зөвхөн push үйлчилгээ рүү, мессеж нэг л удаа, апп-ын role хүрэхгүй (Phase 5)", async () => {
+    const { generateKeyPairSync, verify } = await import("node:crypto");
+    const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const jwk = privateKey.export({ format: "jwk" });
+    const pubRaw = Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x!, "base64url"), Buffer.from(jwk.y!, "base64url")]);
+    process.env.VAPID_PUBLIC_KEY = pubRaw.toString("base64url");
+    process.env.VAPID_PRIVATE_KEY = jwk.d!;
+    try {
+      const push = await import("@/lib/push");
+      const jwt = push.vapidJwt("https://fcm.googleapis.com", Date.UTC(2026, 0, 1));
+      const [h, b, sig] = jwt.split(".");
+      expect(JSON.parse(Buffer.from(h, "base64url").toString())).toEqual({ typ: "JWT", alg: "ES256" });
+      const body = JSON.parse(Buffer.from(b, "base64url").toString());
+      expect(body).toMatchObject({ aud: "https://fcm.googleapis.com", exp: Date.UTC(2026, 0, 1) / 1000 + 12 * 3600 });
+      expect(body.sub).toMatch(/^(https:|mailto:)/);
+      expect(verify("sha256", Buffer.from(`${h}.${b}`), { key: publicKey, dsaEncoding: "ieee-p1363" }, Buffer.from(sig, "base64url"))).toBe(true);
+      expect(verify("sha256", Buffer.from(`${h}.${b}x`), { key: push.vapidVerifyKey(), dsaEncoding: "ieee-p1363" }, Buffer.from(sig, "base64url"))).toBe(false);
+
+      expect(push.validEndpoint("https://fcm.googleapis.com/fcm/send/abc")).toBe(true);
+      expect(push.validEndpoint("https://updates.push.services.mozilla.com/wpush/v2/abc")).toBe(true);
+      expect(push.validEndpoint("https://web.push.apple.com/abc")).toBe(true);
+      for (const bad of ["http://fcm.googleapis.com/x", "https://127.0.0.1/x", "https://googleapis.com.evil.example/x", "https://evil.example/?h=fcm.googleapis.com", "javascript:alert(1)"])
+        expect(push.validEndpoint(bad), bad).toBe(false);
+
+      const [p] = await mkPeople(1);
+      await db.sys("INSERT INTO push_message (person_id, title, body, url) VALUES ($1, 'Сануулга', 'Маргааш хичээлтэй', '/me')", [p]);
+      expect(await push.takePending(p)).toMatchObject([{ title: "Сануулга", url: "/me" }]);
+      expect(await push.takePending(p)).toHaveLength(0);
+      for (const sql of ["SELECT * FROM push_subscription", "SELECT * FROM push_message"])
+        await expect(db.withCtx({ personId: p, urguuId: A }, (q) => q(sql))).rejects.toThrow(/permission denied/);
+    } finally {
+      delete process.env.VAPID_PUBLIC_KEY;
+      delete process.env.VAPID_PRIVATE_KEY;
+    }
+  });
 });

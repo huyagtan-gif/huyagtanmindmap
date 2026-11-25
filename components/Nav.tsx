@@ -7,7 +7,7 @@ export type NavItem = { href: string; name: string; short?: string; icon: string
 
 const isOn = (path: string, href: string) => path === href || path.startsWith(href + "/");
 
-export function SideNav({ items }: { items: NavItem[] }) {
+export function SideNav({ items, mainLabel = "Үндсэн цэс", admLabel = "Удирдлага" }: { items: NavItem[]; mainLabel?: string; admLabel?: string }) {
   const path = usePathname();
   const link = (n: NavItem) => (
     <Link key={n.href} className={`nav${isOn(path, n.href) ? " on" : ""}`} href={n.href} aria-current={isOn(path, n.href) ? "page" : undefined}>
@@ -20,10 +20,10 @@ export function SideNav({ items }: { items: NavItem[] }) {
   const adm = items.filter((n) => n.admin);
   return (
     <>
-      <nav className="navg" aria-label="Үндсэн цэс">{main.map(link)}</nav>
+      <nav className="navg" aria-label={mainLabel}>{main.map(link)}</nav>
       {adm.length ? (
-        <nav className="navg" aria-label="Удирдлага">
-          <span className="lbl">УДИРДЛАГА</span>
+        <nav className="navg" aria-label={admLabel}>
+          <span className="lbl">{admLabel.toUpperCase()}</span>
           {adm.map(link)}
         </nav>
       ) : null}
@@ -31,10 +31,10 @@ export function SideNav({ items }: { items: NavItem[] }) {
   );
 }
 
-export function BottomNav({ items }: { items: NavItem[] }) {
+export function BottomNav({ items, label = "Үндсэн цэс" }: { items: NavItem[]; label?: string }) {
   const path = usePathname();
   return (
-    <nav className="bnav" aria-label="Үндсэн цэс">
+    <nav className="bnav" aria-label={label}>
       {items.map((n) => (
         <Link key={n.href} href={n.href} className={isOn(path, n.href) ? "on" : ""}>
           <Icon n={n.icon} s={22} />
@@ -47,15 +47,15 @@ export function BottomNav({ items }: { items: NavItem[] }) {
 }
 
 /** P1.15 Түвшнээр харах сэлгүүр: сонгоход шууд илгээнэ. */
-export function ViewAsSelect({ roles, current, action, compact }: { roles: { id: string; name: string }[]; current: string; action: (fd: FormData) => void; compact?: boolean }) {
+export function ViewAsSelect({ roles, current, action, compact, label = "Түвшнээр харах" }: { roles: { id: string; name: string }[]; current: string; action: (fd: FormData) => void; compact?: boolean; label?: string }) {
   const path = usePathname();
   return (
     <form action={action} className={compact ? undefined : "viewas"}>
       <input type="hidden" name="next" value={path} />
-      {compact ? null : <span>Түвшнээр харах:</span>}
+      {compact ? null : <span>{label}:</span>}
       <select
         name="role"
-        aria-label="Түвшнээр харах"
+        aria-label={label}
         defaultValue={current}
         onChange={(e) => e.currentTarget.form?.requestSubmit()}
         style={compact ? { height: 36, border: "1px dashed var(--line2)", borderRadius: 10, background: "var(--card)", fontSize: 13, fontWeight: 600, padding: "0 8px" } : undefined}

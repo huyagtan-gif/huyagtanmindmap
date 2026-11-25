@@ -51,12 +51,12 @@ export async function registerPublic(q: Q, t: PublicTraining, g: GuestInput): Pr
   return { ...r, personId, token };
 }
 
-export type GuestPart = { id: string; training_id: string; person_id: string; state: string; pay_state: string; completion: string | null; father_name: string | null; given_name: string };
+export type GuestPart = { id: string; training_id: string; person_id: string; state: string; pay_state: string; completion: string | null; certificate_code: string | null; father_name: string | null; given_name: string };
 /** Зочны холбоосын токеноор оролцооны мөрийг олно. */
 export async function participantByToken(q: Q, code: string, token: string): Promise<GuestPart | null> {
   if (!/^[\w-]{20,64}$/.test(token)) return null;
   const [r] = await q<GuestPart>(
-    `SELECT tp.id, tp.training_id, tp.person_id, tp.state, tp.pay_state, tp.completion, p.father_name, p.given_name
+    `SELECT tp.id, tp.training_id, tp.person_id, tp.state, tp.pay_state, tp.completion, tp.certificate_code, p.father_name, p.given_name
      FROM training_participant tp JOIN training t ON t.id = tp.training_id JOIN person p ON p.id = tp.person_id
      WHERE tp.access_hash = $1 AND t.public_code = $2`, [hashToken(token), code]);
   return r || null;

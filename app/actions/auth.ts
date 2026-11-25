@@ -15,7 +15,8 @@ const CONSENT_VERSION = "2026-11";
 
 async function clientIp() {
   const h = await headers();
-  return (h.get("x-forwarded-for") || "").split(",")[0].trim() || h.get("x-real-ip") || "local";
+  // X-Real-IP-г Nginx $remote_addr-аас тавина (клиент хуурч чадахгүй); X-Forwarded-For-ийн эхний утгыг клиент өөрөө бичиж болно.
+  return h.get("x-real-ip") || (h.get("x-forwarded-for") || "").split(",")[0].trim() || "local";
 }
 const safeNext = (s: FormDataEntryValue | null) => (typeof s === "string" && s.startsWith("/") && !s.startsWith("//") ? s : "/");
 const isEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) && s.length <= 254;

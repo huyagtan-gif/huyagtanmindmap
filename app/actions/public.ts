@@ -26,7 +26,8 @@ const str = (fd: FormData, k: string, max = 200) => {
 const isEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) && s.length <= 254;
 async function clientIp() {
   const h = await headers();
-  return (h.get("x-forwarded-for") || "").split(",")[0].trim() || h.get("x-real-ip") || "local";
+  // X-Real-IP-г Nginx $remote_addr-аас тавина (клиент хуурч чадахгүй); X-Forwarded-For-ийн эхний утгыг клиент өөрөө бичиж болно.
+  return h.get("x-real-ip") || (h.get("x-forwarded-for") || "").split(",")[0].trim() || "local";
 }
 const COOKIE = "pubreg";
 type Pending = GuestInput & { code: string };
