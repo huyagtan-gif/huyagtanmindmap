@@ -24,6 +24,8 @@ export type Viewer = {
   canViewAs: boolean;
   perms: Set<string>;
   fields: Set<string>;
+  /** Зөвшөөрөгдсөн mind map харагдацууд (role_view) */
+  views: Set<string>;
 };
 
 const superEmail = () => (process.env.SUPER_ADMIN_EMAIL || "").trim().toLowerCase();
@@ -110,7 +112,7 @@ export const getViewer = cache(async (): Promise<Viewer | null> => {
     userId: u.id, email: u.email, userName: u.name, personId, personName: null, formCompleted: false,
     isPlatformAdmin: u.is_platform_admin || (!!superEmail() && u.email.toLowerCase() === superEmail()),
     urguu: null, membershipState: null, realRole: null, role: null, viewAs: false, canViewAs: false,
-    perms: new Set(), fields: new Set(),
+    perms: new Set(), fields: new Set(), views: new Set(),
   };
   if (!personId) return v;
 
@@ -155,6 +157,7 @@ export const getViewer = cache(async (): Promise<Viewer | null> => {
       (r) => r.field_key,
     ),
   );
+  v.views = new Set((await sys<{ view: string }>("SELECT view FROM role_view WHERE role_id = $1", [roleId])).map((r) => r.view));
   return v;
 });
 

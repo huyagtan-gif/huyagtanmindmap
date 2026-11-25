@@ -3,7 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { asViewer, requirePerm } from "@/lib/viewer";
-import { FIELD_KEYS, PERMISSIONS } from "@/lib/fields";
+import { FIELD_KEYS, PERMISSIONS, VIEWS } from "@/lib/fields";
 import { runImport } from "@/lib/import";
 import { sendMail, SITE_URL, escHtml } from "@/lib/mail";
 import { mergePersons, UUID } from "@/lib/people-write";
@@ -161,7 +161,7 @@ export async function saveRole(fd: FormData) {
     else {
       const [r] = await q<{ id: string }>("INSERT INTO role (urguu_id, name, sort) VALUES (app_urguu(), $1, $2) RETURNING id", [name, int(str(fd, "sort"), 99)]);
       await q("INSERT INTO permission (role_id, urguu_id, key) VALUES ($1, app_urguu(), 'person.view')", [r.id]);
-      await q("INSERT INTO role_view (role_id, urguu_id, view) VALUES ($1, app_urguu(), 'tree'), ($1, app_urguu(), 'kanban')", [r.id]);
+      await q("INSERT INTO role_view (role_id, urguu_id, view) SELECT $1, app_urguu(), v FROM unnest($2::text[]) AS v", [r.id, VIEWS.map((x) => x.key)]);
     }
   });
   done("/admin/settings?tab=roles", "Хадгалагдлаа");
@@ -193,6 +193,21 @@ export async function savePermissions(fd: FormData) {
     }
   });
   done("/admin/settings?tab=roles", "Эрх хадгалагдлаа");
+}
+
+/** P2.2: түвшин бүрт зөвшөөрөх mind map харагдацууд (role_view). */
+export async function saveRoleViews(fd: FormData) {
+  const v = await requirePerm("settings.manage");
+  await asViewer(v, async (q) => {
+    const roles = await q<{ id: string; is_system: boolean }>("SELECT id, is_system FROM role");
+    for (const r of roles) {
+      // Супер админ бүх харагдацыг үргэлж харна
+      const want = VIEWS.map((x) => x.key as string).filter((k) => r.is_system || fd.get(`v:${r.id}:${k}`) === "on");
+      await q("DELETE FROM role_view WHERE role_id = $1 AND NOT (view = ANY($2))", [r.id, want]);
+      for (const k of want) await q("INSERT INTO role_view (role_id, urguu_id, view) VALUES ($1, app_urguu(), $2) ON CONFLICT DO NOTHING", [r.id, k]);
+    }
+  });
+  done("/admin/settings?tab=roles", "Харагдацын эрх хадгалагдлаа");
 }
 
 export async function saveFieldPermissions(fd: FormData) {

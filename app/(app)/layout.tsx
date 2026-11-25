@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { logout, setViewAs } from "@/app/actions/auth";
 import { BottomNav, SideNav, ViewAsSelect, type NavItem } from "@/components/Nav";
+import { RealtimeProvider } from "@/components/Realtime";
 import { Avatar, Icon } from "@/components/ui";
 import { asViewer, requireMember } from "@/lib/viewer";
 
@@ -28,7 +29,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (p.has("audit.view")) items.push({ href: "/admin/audit", name: "Өөрчлөлтийн түүх", icon: "log", admin: true });
   const name = v.personName || v.email;
   return (
-    <>
+    <RealtimeProvider>
       <div className="app">
         <aside className="side">
           <div className="brand"><span className="logo" style={{ color: "#fff" }}><Icon n="map" s={18} /></span>Хуягтан</div>
@@ -67,6 +68,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </div>
       </div>
       <BottomNav items={items.filter((n) => !n.admin).concat(items.filter((n) => n.admin).slice(0, 1))} />
-    </>
+    </RealtimeProvider>
   );
 }

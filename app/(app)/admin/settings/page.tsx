@@ -1,12 +1,12 @@
 import Link from "next/link";
 import {
-  deleteListItem, deleteQuestion, deleteRole, saveFieldPermissions, saveListItem, savePermissions, saveQuestion, saveRole, setMemberRole,
+  deleteListItem, deleteQuestion, deleteRole, saveFieldPermissions, saveListItem, savePermissions, saveQuestion, saveRole, saveRoleViews, setMemberRole,
 } from "@/app/actions/admin";
 import { AutoSubmitSelect, ConfirmButton } from "@/components/AutoSubmit";
 import { Flash } from "@/components/Flash";
 import { PAL_NAMES, SHAPES, Shape } from "@/components/ui";
 import { loadLookups } from "@/lib/data";
-import { FIELD_KEYS, PERMISSIONS } from "@/lib/fields";
+import { FIELD_KEYS, PERMISSIONS, VIEWS } from "@/lib/fields";
 import { displayName } from "@/lib/project";
 import { asViewer, requirePerm } from "@/lib/viewer";
 
@@ -50,6 +50,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
     lk: await loadLookups(q),
     perms: await q<{ role_id: string; key: string }>("SELECT role_id, key FROM permission"),
     fperms: await q<{ role_id: string; field_key: string }>("SELECT role_id, field_key FROM field_permission"),
+    rviews: await q<{ role_id: string; view: string }>("SELECT role_id, view FROM role_view"),
     questions: tab === "questions" ? await q<any>("SELECT * FROM form_question WHERE urguu_id = app_urguu() ORDER BY sort, text") : [],
     members: tab === "members"
       ? await q<{ person_id: string; father_name: string | null; given_name: string; role_id: string | null }>(
@@ -60,6 +61,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
   const { lk } = d;
   const has = new Set(d.perms.map((p) => `${p.role_id}:${p.key}`));
   const fhas = new Set(d.fperms.map((p) => `${p.field_key}:${p.role_id}`));
+  const vhas = new Set(d.rviews.map((p) => `${p.role_id}:${p.view}`));
   const mySystem = lk.roles.find((r) => r.id === v.realRole?.id)?.is_system;
   return (
     <>
@@ -129,6 +131,23 @@ export default async function Settings({ searchParams }: { searchParams: Promise
               </table>
             </div>
             <div style={{ padding: 16 }}><button className="btn pri">Эрх хадгалах</button></div>
+          </form>
+          <form action={saveRoleViews} className="card p0">
+            <div className="col g4" style={{ padding: "16px 16px 8px" }}><h2>Mind map-ийн харагдац</h2><span className="small muted">Чагтгүй түвшинд тухайн харагдацын таб гарахгүй.</span></div>
+            <div className="tscroll">
+              <table className="t">
+                <thead><tr><th>Харагдац</th>{lk.roles.map((r) => <th key={r.id}>{r.name}</th>)}</tr></thead>
+                <tbody>
+                  {VIEWS.map((x) => (
+                    <tr key={x.key}>
+                      <td>{x.name}</td>
+                      {lk.roles.map((r) => <td key={r.id}><input type="checkbox" name={`v:${r.id}:${x.key}`} defaultChecked={r.is_system || vhas.has(`${r.id}:${x.key}`)} disabled={r.is_system} aria-label={`${r.name}: ${x.name}`} style={{ width: 18, height: 18, accentColor: "var(--pri)" }} /></td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding: 16 }}><button className="btn pri">Харагдац хадгалах</button></div>
           </form>
         </>
       ) : null}

@@ -112,6 +112,7 @@ export default async function PersonCard({ params, searchParams }: { params: Pro
               </form>
             ) : null}
             {canEdit ? <Link className="btn" href={p.is_self ? "/me" : `/people/${id}/edit`}><Icon n="edit" s={16} />Засах</Link> : null}
+            {p.is_registered && v.perms.has("person.view") && v.views.has("ego") ? <Link className="btn soft" href={`/map?view=ego&ego=${id}`}>Төвд нь харах</Link> : null}
           </div>
         </div>
         {p.is_registered && ci >= 0 ? (

@@ -28,3 +28,14 @@ export const PERMISSIONS = [
   { key: "role.view_as", name: "Түвшнээр харах" },
 ] as const;
 export type PermKey = (typeof PERMISSIONS)[number]["key"];
+
+// Mind map-ийн харагдацууд (role_view.view). Энэ дарааллаар таб болж гарна.
+export const VIEWS = [
+  { key: "tree", name: "Онгодын мод" },
+  { key: "era", name: "Цаг үеэр" },
+  { key: "net", name: "Багш–шавь сүлжээ" },
+  { key: "kanban", name: "Явцын самбар" },
+  { key: "deedes", name: "Дээдсээр" },
+  { key: "ego", name: "Нэг хүн төвд" },
+] as const;
+export type ViewKey = (typeof VIEWS)[number]["key"];

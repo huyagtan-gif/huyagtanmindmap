@@ -3,12 +3,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { changeStatus } from "@/app/actions/person";
+import { VIEWS, type ViewKey } from "@/lib/fields";
+import { LiveBadge } from "./Realtime";
 import { Avatar, Icon, Locked, Shape, StatusChip, pal } from "./ui";
 
 export type MStatus = { id: string; name: string; pal: number; shape: string; description: string | null };
 export type MOngod = { id: string; parent_id: string | null; name: string; kind: "group" | "ongod"; era_id: string | null; needs_review: boolean };
 export type MPerson = {
-  id: string; name: string; clan: string | null; status_id: string | null; ongods: string[]; deedes: string[];
+  id: string; name: string; /** false = зөвхөн нэрээр дурдагдсан, бүртгэлгүй хүн */ reg: boolean; clan: string | null; status_id: string | null; ongods: string[]; deedes: string[];
   supporters: string[]; teachers: string[]; introducers: string[]; search: string;
   huyag_on?: string | null; phone?: string | null; email?: string | null; hidden: string[]; since: string | null;
   nStudents: number; nIntroduced: number; nSupported: number;
@@ -18,8 +20,17 @@ type TNode = { key: string; kind: "root" | "k" | "g" | "o" | "e" | "p"; label: s
 
 type Props = {
   urguuName: string; statuses: MStatus[]; eras: { id: string; name: string }[]; ongods: MOngod[]; people: MPerson[];
-  canStatus: boolean; canEdit: boolean; initialView: "tree" | "kanban"; recent: { what: string; who: string; at: string }[];
+  canStatus: boolean; canEdit: boolean; views: ViewKey[]; initialView: ViewKey; meId: string | null; initialEgo: string | null;
+  recent: { what: string; who: string; at: string }[];
 };
+
+type NetRel = "teacher" | "supporter" | "introducer";
+const NET: Record<NetRel, { name: string; none: string }> = {
+  teacher: { name: "Багш–шавь", none: "Багш, шавь бүртгэгдээгүй" },
+  supporter: { name: "Түшсэн", none: "Түшсэн хүн бүртгэгдээгүй" },
+  introducer: { name: "Танилцуулсан", none: "Танилцуулсан хүн бүртгэгдээгүй" },
+};
+const VIEW_NAME = new Map<string, string>(VIEWS.map((v) => [v.key, v.name]));
 
 let ctx2d: CanvasRenderingContext2D | null = null;
 function textW(t: string, px: number, wt: number) {
@@ -28,6 +39,7 @@ function textW(t: string, px: number, wt: number) {
   ctx2d.font = `${wt} ${px}px Inter, system-ui, sans-serif`;
   return ctx2d.measureText(t).width;
 }
+const EMPTY: Record<string, boolean> = {};
 const countP = (n: TNode): number => (n.kind === "p" ? 1 : 0) + n.children.reduce((a, c) => a + countP(c), 0);
 const daysSince = (d: string | null) => (d ? Math.max(0, Math.round((Date.now() - new Date(d).getTime()) / 864e5)) : 0);
 
@@ -47,21 +59,27 @@ export function MapView(props: Props) {
   const { statuses, eras, ongods, canStatus } = props;
   const router = useRouter();
   const mobile = useIsMobile();
-  const [people, setPeople] = useState(props.people);
+  // Бүртгэлгүй (нэрээр дурдагдсан) хүмүүс зөвхөн сүлжээ ба «нэг хүн төвд» харагдацад гарна.
+  const [allPeople, setPeople] = useState(props.people);
   useEffect(() => setPeople(props.people), [props.people]);
-  const [view, setView] = useState(props.initialView);
+  const people = useMemo(() => allPeople.filter((p) => p.reg), [allPeople]);
+  const [view, setView] = useState<ViewKey>(props.initialView);
+  const [ego, setEgo] = useState<string | null>(props.initialEgo);
+  const [netRel, setNetRel] = useState<NetRel>("teacher");
   const [q, setQ] = useState("");
   const [off, setOff] = useState<Set<string>>(new Set());
   const [era, setEra] = useState("");
   const [showEmpty, setShowEmpty] = useState(true);
   const [sel, setSel] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [collapsedAll, setCollapsedAll] = useState<Record<string, Record<string, boolean>>>({ net: { "net:none": true } });
+  const collapsed = collapsedAll[view] || EMPTY;
+  const setCollapsed = (f: (c: Record<string, boolean>) => Record<string, boolean>) => setCollapsedAll((all) => ({ ...all, [view]: f(all[view] || EMPTY) }));
   const [toast, setToast] = useState("");
   const [, startT] = useTransition();
 
   const stBy = useMemo(() => new Map(statuses.map((s) => [s.id, s])), [statuses]);
-  const pBy = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
+  const pBy = useMemo(() => new Map(allPeople.map((p) => [p.id, p])), [allPeople]);
   const oBy = useMemo(() => new Map(ongods.map((o) => [o.id, o])), [ongods]);
   const ongodPath = (id: string) => {
     const parts: string[] = [];
@@ -74,10 +92,92 @@ export function MapView(props: Props) {
   const matchQ = (n: TNode) => !!ql && (n.kind === "p" ? (pBy.get(n.pid!)?.search || "").includes(ql) : n.label.toLowerCase().includes(ql));
   const hasHit = (n: TNode): boolean => matchQ(n) || n.children.some(hasHit);
 
+  const egoId = ego && pBy.get(ego)?.reg ? ego : props.meId && pBy.get(props.meId)?.reg ? props.meId : people[0]?.id ?? null;
+  const goEgo = (id: string) => {
+    setEgo(id);
+    setSel(id);
+    setView("ego");
+    window.history.replaceState(null, "", `/map?view=ego&ego=${id}`);
+  };
+
   const tree = useMemo<TNode>(() => {
     const pNode = (p: MPerson, pre = ""): TNode => ({ key: pre + "p" + p.id, kind: "p", pid: p.id, label: p.name, children: [] });
+    const rootOf = (children: TNode[]): TNode => ({ key: "root", kind: "root", label: props.urguuName, children });
     const byOngod = new Map<string, MPerson[]>();
     for (const p of people) for (const o of p.ongods) (byOngod.get(o) || byOngod.set(o, []).get(o)!).push(p);
+
+    if (view === "era") {
+      // Цаг үе → онгод → хүн. Онгодын цаг үе нь өөрийн эсвэл дээд зангилааных.
+      const eraOf = (id: string): string | null => {
+        let o = oBy.get(id);
+        let g = 0;
+        while (o && g++ < 50) { if (o.era_id) return o.era_id; o = o.parent_id ? oBy.get(o.parent_id) : undefined; }
+        return null;
+      };
+      const groups = new Map<string, TNode[]>();
+      for (const o of ongods) {
+        const ps = byOngod.get(o.id);
+        if (!ps?.length) continue;
+        const e = eraOf(o.id) || "none";
+        (groups.get(e) || groups.set(e, []).get(e)!).push({ key: "e" + o.id, kind: "o", label: o.name, children: ps.map((p) => pNode(p, "e" + o.id)) });
+      }
+      const top: TNode[] = eras.filter((e) => (!era || e.id === era) && groups.get(e.id)?.length).map((e) => ({ key: "era:" + e.id, kind: "k", label: e.name, children: groups.get(e.id)! }));
+      if (!era) {
+        if (groups.get("none")?.length) top.push({ key: "era:none", kind: "k", label: "Цаг үе заагаагүй", children: groups.get("none")! });
+        const no = people.filter((p) => !p.ongods.some((o) => oBy.has(o)));
+        if (no.length) top.push({ key: "era:noongod", kind: "k", label: "Онгод тодроогүй", children: no.map((p) => pNode(p, "en")) });
+      }
+      return rootOf(top);
+    }
+
+    if (view === "net") {
+      // Багш → шавь (эсвэл түшсэн / танилцуулсан) сүлжээ. Олон багштай хүн багш бүрийнхээ доор гарна (D38).
+      const parentsOf = (p: MPerson) => (netRel === "teacher" ? p.teachers : netRel === "supporter" ? p.supporters : p.introducers).filter((t) => t !== p.id && pBy.has(t));
+      const kids = new Map<string, MPerson[]>();
+      for (const p of allPeople) for (const t of parentsOf(p)) (kids.get(t) || kids.set(t, []).get(t)!).push(p);
+      const seen = new Set<string>();
+      const build = (p: MPerson, pre: string, path: Set<string>): TNode => {
+        seen.add(p.id);
+        const key = pre + ">" + p.id;
+        const np = new Set(path).add(p.id);
+        return { key: "n" + key, kind: "p", pid: p.id, label: p.name, children: (kids.get(p.id) || []).filter((c) => !np.has(c.id)).map((c) => build(c, key, np)) };
+      };
+      const ch = allPeople.filter((p) => kids.has(p.id) && !parentsOf(p).length).map((r) => build(r, "", new Set()));
+      // Тойрог холбоо (А нь Б-ийн багш, Б нь А-ийн багш) үндэсгүй үлдэхээс сэргийлнэ.
+      for (const p of allPeople) if (!seen.has(p.id) && kids.has(p.id)) ch.push(build(p, "", new Set()));
+      const rest = people.filter((p) => !seen.has(p.id));
+      if (rest.length) ch.push({ key: "net:none", kind: "g", label: NET[netRel].none, children: rest.map((p) => pNode(p, "nn")) });
+      return rootOf(ch);
+    }
+
+    if (view === "deedes") {
+      const by = new Map<string, MPerson[]>();
+      for (const p of people) for (const d of p.deedes) (by.get(d) || by.set(d, []).get(d)!).push(p);
+      const ch: TNode[] = [...by].sort((a, b) => a[0].localeCompare(b[0], "mn")).map(([d, ps]) => ({ key: "d:" + d, kind: "g", label: d, children: ps.map((p) => pNode(p, "d:" + d)) }));
+      const no = people.filter((p) => !p.deedes.length);
+      if (no.length) ch.push({ key: "d:none", kind: "k", label: "Дээдэс хараахан тодроогүй", children: no.map((p) => pNode(p, "dn")) });
+      return rootOf(ch);
+    }
+
+    if (view === "ego") {
+      const c = egoId ? pBy.get(egoId) : undefined;
+      if (!c) return rootOf([]);
+      const sec = (k: string, label: string, arr: TNode[]): TNode | null => (arr.length ? { key: "s" + k, kind: "g", label, children: arr } : null);
+      const pp = (k: string, ids: string[]) => [...new Set(ids)].map((i) => pBy.get(i)).filter((x): x is MPerson => !!x && x.id !== c.id).map((x) => pNode(x, "eg" + k));
+      const rev = (f: (p: MPerson) => string[]) => allPeople.filter((p) => f(p).includes(c.id)).map((p) => p.id);
+      const leaf = (key: string, label: string): TNode => ({ key, kind: "o", label, children: [] });
+      return { key: "root", kind: "p", pid: c.id, label: c.name, children: [
+        sec("o", "Онгод", c.ongods.filter((o) => oBy.has(o)).map((o) => leaf("eo" + o, ongodPath(o)))),
+        sec("d", "Хуягласан дээдэс", c.deedes.map((d) => leaf("ed" + d, d))),
+        sec("t", "Багш", pp("t", c.teachers)),
+        sec("i", "Танилцуулсан", pp("i", c.introducers)),
+        sec("u", "Түшиж хуягласан", pp("u", c.supporters)),
+        sec("st", "Шавь нар", pp("st", rev((p) => p.teachers))),
+        sec("si", "Түүний танилцуулсан хүмүүс", pp("si", rev((p) => p.introducers))),
+        sec("su", "Түүний түшсэн хүмүүс", pp("su", rev((p) => p.supporters))),
+      ].filter((x): x is TNode => !!x) };
+    }
+
     const kidsOf = new Map<string, MOngod[]>();
     for (const o of ongods) { const k = o.parent_id || "root"; (kidsOf.get(k) || kidsOf.set(k, []).get(k)!).push(o); }
     const build = (parent: string, depth: number): TNode[] =>
@@ -100,8 +200,9 @@ export function MapView(props: Props) {
         const ps = people.filter((p) => !p.ongods.length && p.status_id === s.id);
         if (ps.length) top.push({ key: "none:" + s.id, kind: "k", label: `${s.name} · онгод тодроогүй`, children: ps.map((p) => pNode(p)) });
       }
-    return { key: "root", kind: "root", label: props.urguuName, children: top };
-  }, [people, ongods, era, showEmpty, statuses, props.urguuName]);
+    return rootOf(top);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [people, allPeople, ongods, era, showEmpty, statuses, props.urguuName, view, netRel, egoId, eras]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -138,7 +239,7 @@ export function MapView(props: Props) {
           <Avatar name={p.name} st={st} size={56} />
           <div className="col g4" style={{ flex: 1, minWidth: 0 }}>
             <h2 style={{ fontSize: 20 }}>{p.name}</h2>
-            <div className="row wrap" style={{ gap: 6 }}><StatusChip st={st} />{p.nStudents ? <span className="chip">Багш</span> : null}</div>
+            <div className="row wrap" style={{ gap: 6 }}>{p.reg ? <StatusChip st={st} /> : <span className="chip">Бүртгэлд алга</span>}{p.nStudents ? <span className="chip">Багш</span> : null}</div>
           </div>
           {compact ? null : <button className="btn icon sm ghost" aria-label="Хаах" onClick={() => setSel(null)}><Icon n="x" s={18} /></button>}
         </div>
@@ -162,7 +263,10 @@ export function MapView(props: Props) {
             {p.hidden.includes("email") ? null : <div className="row between small"><span className="muted">Имэйл</span><b style={{ overflowWrap: "anywhere" }}>{p.email || "—"}</b></div>}
           </div>
         )}
-        <div className="row" style={{ marginTop: "auto" }}><Link className="btn pri" style={{ flex: 1 }} href={`/people/${pid}`}>Профайл нээх</Link></div>
+        <div className="row" style={{ marginTop: "auto" }}>
+          <Link className="btn pri" style={{ flex: 1 }} href={`/people/${pid}`}>Профайл нээх</Link>
+          {props.views.includes("ego") && p.reg && !(view === "ego" && egoId === pid) ? <button className="btn" onClick={() => goEgo(pid)}>Төвд нь харах</button> : null}
+        </div>
       </>
     );
   };
@@ -170,7 +274,7 @@ export function MapView(props: Props) {
   return (
     <>
       <div className="pagehead">
-        <div className="col g4"><div className="crumb">{props.urguuName}</div><h1>Mind map</h1></div>
+        <div className="col g4"><div className="crumb">{props.urguuName}</div><div className="row wrap g12"><h1>Mind map</h1><LiveBadge /></div></div>
         <div className="row wrap">
           <label className="search" style={{ width: 300, maxWidth: "100%", flex: "1 1 220px" }}>
             <Icon n="search" s={16} /><input type="search" placeholder="Хүн, онгод хайх" aria-label="Хайх" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -191,31 +295,56 @@ export function MapView(props: Props) {
         ))}
       </div>
       <div className="row wrap between g12">
-        <div className="seg" role="tablist" aria-label="Харагдац">
-          {([["tree", "Онгодын мод"], ["kanban", "Явцын самбар"]] as const).map(([id, nm]) => (
-            <button key={id} role="tab" aria-selected={view === id} className={view === id ? "on" : ""} onClick={() => { setView(id); window.history.replaceState(null, "", `/map?view=${id}`); }}>{nm}</button>
+        <div className="seg" role="tablist" aria-label="Харагдац" style={{ flexWrap: "nowrap", overflowX: "auto", maxWidth: "100%" }}>
+          {VIEWS.filter((x) => props.views.includes(x.key)).map(({ key: id, name: nm }) => (
+            <button key={id} role="tab" aria-selected={view === id} className={view === id ? "on" : ""} style={{ whiteSpace: "nowrap" }}
+              onClick={() => { setView(id); setSel(null); window.history.replaceState(null, "", `/map?view=${id}`); }}>{nm}</button>
           ))}
         </div>
-        {view === "tree" ? (
-          <div className="row wrap">
+        <div className="row wrap">
+          {view === "tree" || view === "era" ? (
             <label className="search" style={{ padding: "0 10px", gap: 6 }}>
               <span className="small muted">Цаг үе</span>
               <select value={era} onChange={(e) => setEra(e.target.value)} style={{ border: 0, background: "transparent", fontWeight: 600, fontSize: 14 }}>
                 <option value="">Бүгд</option>{eras.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
               </select>
             </label>
-            <button className={`fchip${showEmpty ? " on" : ""}`} aria-pressed={showEmpty} onClick={() => setShowEmpty((v) => !v)}>Сул суудал</button>
-          </div>
-        ) : null}
+          ) : null}
+          {view === "tree" ? <button className={`fchip${showEmpty ? " on" : ""}`} aria-pressed={showEmpty} onClick={() => setShowEmpty((v) => !v)}>Сул суудал</button> : null}
+          {view === "net" ? (
+            <label className="search" style={{ padding: "0 10px", gap: 6 }}>
+              <span className="small muted">Холбоо</span>
+              <select value={netRel} onChange={(e) => setNetRel(e.target.value as NetRel)} aria-label="Холбооны төрөл" style={{ border: 0, background: "transparent", fontWeight: 600, fontSize: 14 }}>
+                {(Object.keys(NET) as NetRel[]).map((k) => <option key={k} value={k}>{NET[k].name}</option>)}
+              </select>
+            </label>
+          ) : null}
+          {view === "ego" ? (
+            <label className="search" style={{ padding: "0 10px", gap: 6 }}>
+              <span className="small muted">Төвд</span>
+              <select value={egoId || ""} onChange={(e) => goEgo(e.target.value)} aria-label="Төвд харах хүн" style={{ border: 0, background: "transparent", fontWeight: 600, fontSize: 14, maxWidth: 200 }}>
+                {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </label>
+          ) : null}
+        </div>
       </div>
 
-      {mobile === null ? <div className="card" style={{ minHeight: 320 }} /> : view === "kanban" ? (
+      {!props.views.length ? <div className="card"><div className="empty"><b>Харагдац нээгдээгүй байна</b><span>Таны түвшинд mind map-ийн харагдац зөвшөөрөгдөөгүй байна. Өргөөний админд хандана уу.</span></div></div> : null}
+      {!props.views.length ? null : mobile === null ? <div className="card" style={{ minHeight: 320 }} /> : view === "kanban" ? (
         <Kanban people={people} statuses={statuses} stBy={stBy} ql={ql} can={canStatus} mobile={mobile} move={move} ongodPath={ongodPath} pBy={pBy} />
       ) : mobile ? (
-        <Outline root={tree} pBy={pBy} stBy={stBy} off={off} matchQ={matchQ} hasHit={hasHit} ql={ql} onPerson={setSel} />
+        <>
+          {view === "ego" && egoId && pBy.get(egoId) ? (
+            <button className="pchip" style={{ alignSelf: "flex-start", height: 44, fontWeight: 700, borderColor: pal(stBy.get(pBy.get(egoId)!.status_id || "")?.pal).c }} onClick={() => setSel(egoId)}>
+              <Avatar name={pBy.get(egoId)!.name} st={stBy.get(pBy.get(egoId)!.status_id || "")} size={30} />{pBy.get(egoId)!.name}
+            </button>
+          ) : null}
+          <Outline key={view} root={tree} pBy={pBy} stBy={stBy} off={off} matchQ={matchQ} hasHit={hasHit} ql={ql} onPerson={setSel} />
+        </>
       ) : (
         <div className="mapwrap">
-          <TreeCanvas root={tree} pBy={pBy} stBy={stBy} off={off} sel={sel} setSel={setSel} zoom={zoom} setZoom={setZoom}
+          <TreeCanvas key={view} view={view} root={tree} pBy={pBy} stBy={stBy} off={off} sel={sel} setSel={setSel} zoom={zoom} setZoom={setZoom}
             collapsed={collapsed} setCollapsed={setCollapsed} matchQ={matchQ} hasHit={hasHit} ql={ql} statuses={statuses} />
           <aside className="panel" aria-label="Дэлгэрэнгүй">
             {sel && pBy.get(sel) ? quickCard(sel) : (
@@ -231,7 +360,7 @@ export function MapView(props: Props) {
         </div>
       )}
 
-      {mobile && sel && pBy.get(sel) && view === "tree" ? (
+      {mobile && sel && pBy.get(sel) && view !== "kanban" ? (
         <>
           <div className="scrim in" style={{ zIndex: 55 }} onClick={() => setSel(null)} />
           <section className="sheet in"><div className="grab" />{quickCard(sel, true)}</section>
@@ -243,8 +372,8 @@ export function MapView(props: Props) {
 }
 
 /* ---------- Онгодын мод (компьютер) ---------- */
-function TreeCanvas({ root, pBy, stBy, off, sel, setSel, zoom, setZoom, collapsed, setCollapsed, matchQ, hasHit, ql, statuses }: {
-  root: TNode; pBy: Map<string, MPerson>; stBy: Map<string, MStatus>; off: Set<string>; sel: string | null; setSel: (s: string | null) => void;
+function TreeCanvas({ view, root, pBy, stBy, off, sel, setSel, zoom, setZoom, collapsed, setCollapsed, matchQ, hasHit, ql, statuses }: {
+  view: ViewKey; root: TNode; pBy: Map<string, MPerson>; stBy: Map<string, MStatus>; off: Set<string>; sel: string | null; setSel: (s: string | null) => void;
   zoom: number; setZoom: (f: (z: number) => number) => void; collapsed: Record<string, boolean>; setCollapsed: (f: (c: Record<string, boolean>) => Record<string, boolean>) => void;
   matchQ: (n: TNode) => boolean; hasHit: (n: TNode) => boolean; ql: string; statuses: MStatus[];
 }) {
@@ -259,7 +388,7 @@ function TreeCanvas({ root, pBy, stBy, off, sel, setSel, zoom, setZoom, collapse
     const nodes: TNode[] = [];
     let row = 0;
     let selChain: TNode[] = [];
-    const sz = (n: TNode): [number, number, number] => n.kind === "root" ? [15, 700, 34] : n.kind === "k" ? [14, 700, 30] : n.kind === "p" ? [13, 600, 58] : [13, n.kind === "g" ? 600 : 500, 30];
+    const sz = (n: TNode): [number, number, number] => n.key === "root" ? (n.kind === "p" ? [15, 700, 70] : [15, 700, 34]) : n.kind === "k" ? [14, 700, 30] : n.kind === "p" ? [13, 600, 58] : [13, n.kind === "g" ? 600 : 500, 30];
     const walk = (n: TNode, depth: number, chain: TNode[]) => {
       const coll = !!collapsed[n.key] && !(ql && hasHit(n));
       const [px, wt, pad] = sz(n);
@@ -274,7 +403,7 @@ function TreeCanvas({ root, pBy, stBy, off, sel, setSel, zoom, setZoom, collapse
     walk(root, 0, []);
     const colX = [24];
     for (let i = 1; i < colW.length; i++) colX[i] = colX[i - 1] + colW[i - 1] + GAP;
-    const H = (n: TNode) => (n.kind === "root" ? 44 : n.kind === "k" ? 38 : 34);
+    const H = (n: TNode) => (n.key === "root" ? 44 : n.kind === "k" ? 38 : 34);
     let paths = "", hot = "";
     const hotSet = new Set(selChain);
     nodes.forEach((n) => { n.x = colX[n.depth!]; });
@@ -291,7 +420,7 @@ function TreeCanvas({ root, pBy, stBy, off, sel, setSel, zoom, setZoom, collapse
   const centered = useRef(false);
   useEffect(() => {
     const el = ms.current;
-    const rootN = L.nodes.find((n) => n.kind === "root");
+    const rootN = L.nodes.find((n) => n.key === "root");
     if (!el || !rootN || centered.current || !fontsReady) return;
     centered.current = true;
     el.scrollTop = Math.max(0, rootN.y! * zoom - el.clientHeight / 2 + 20);
@@ -326,10 +455,11 @@ function TreeCanvas({ root, pBy, stBy, off, sel, setSel, zoom, setZoom, collapse
             {L.nodes.map((n) => {
               const isP = n.kind === "p";
               const p = isP ? pBy.get(n.pid!) : undefined;
-              const st = p ? stBy.get(p.status_id || "") : undefined;
+              const st = p?.reg ? stBy.get(p.status_id || "") : undefined;
               const c = pal(st?.pal);
-              const cls = ["node", n.kind, n.coll ? "coll" : "", isP && sel === n.pid ? "on" : "", p && off.has(p.status_id || "") ? "dim" : "", matchQ(n) ? "hit" : ""].join(" ");
-              const style: React.CSSProperties = { left: n.x, top: n.y, width: n.w, ...(isP ? { borderColor: c.c, background: sel === n.pid ? c.s : "#fff" } : {}) };
+              const cls = ["node", n.kind, n.coll ? "coll" : "", isP && sel === n.pid ? "on" : "", p?.reg && off.has(p.status_id || "") ? "dim" : "", matchQ(n) ? "hit" : ""].join(" ");
+              const style: React.CSSProperties = { left: n.x, top: n.y, width: n.w, ...(isP ? { borderColor: c.c, background: sel === n.pid ? c.s : "#fff" } : {}), ...(p && !p.reg ? { borderStyle: "dashed", color: "var(--muted)" } : {}),
+                ...(isP && n.key === "root" ? { height: 44, fontSize: 15, borderWidth: 2, fontWeight: 700 } : {}) };
               const cnt = (n.kind === "k" || n.kind === "g") && n.children.length ? countP(n) : 0;
               return (
                 <button key={n.key} className={cls} style={style}
@@ -339,7 +469,7 @@ function TreeCanvas({ root, pBy, stBy, off, sel, setSel, zoom, setZoom, collapse
                     if (n.kind === "root" || !n.children.length) return;
                     setCollapsed((cm) => ({ ...cm, [n.key]: !n.coll }));
                   }}>
-                  {isP ? <><Avatar name={n.label} st={st} size={24} /><span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{n.label}</span></> : (
+                  {isP ? <><Avatar name={n.label} st={st} size={n.key === "root" ? 32 : 24} /><span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{n.label}</span></> : (
                     <><span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{n.label}</span>{cnt ? <span className="cnt">{cnt}</span> : null}{n.kind === "e" ? <span className="add" style={{ color: "var(--faint)" }}>сул суудал</span> : null}</>
                   )}
                 </button>
@@ -349,11 +479,11 @@ function TreeCanvas({ root, pBy, stBy, off, sel, setSel, zoom, setZoom, collapse
         </div>
       </div>
       <div className="mcrumb">
-        {L.selChain.length ? <>{L.selChain.slice(0, -1).map((n) => n.label).join(" › ")} › <b>{L.selChain[L.selChain.length - 1].label}</b></> : <><b>Онгодын мод</b> · Хүн дээр дарж дэлгэрэнгүйг харна</>}
+        {L.selChain.length ? <>{L.selChain.slice(0, -1).map((n) => n.label).join(" › ")} › <b>{L.selChain[L.selChain.length - 1].label}</b></> : <><b>{VIEW_NAME.get(view)}</b> · Хүн дээр дарж дэлгэрэнгүйг харна</>}
       </div>
       <div className="legend">
         {statuses.map((s) => <span key={s.id} className="row" style={{ gap: 6 }}><Shape st={s} s={12} />{s.name}</span>)}
-        <span className="row" style={{ gap: 6 }}><span style={{ width: 18, height: 10, border: "1px dashed #8A94A3", borderRadius: 3 }} />Сул суудал</span>
+        {view === "tree" ? <span className="row" style={{ gap: 6 }}><span style={{ width: 18, height: 10, border: "1px dashed #8A94A3", borderRadius: 3 }} />Сул суудал</span> : null}
       </div>
       <div className="mapctl">
         <button aria-label="Томруулах" onClick={() => setZoom((z) => Math.min(1.8, z + 0.15))}>+</button>
@@ -378,15 +508,15 @@ function Outline({ root, pBy, stBy, off, matchQ, hasHit, ql, onPerson }: {
     );
   };
   const rec = (n: TNode, lv: number): React.ReactNode => {
-    const ps = n.children.filter((k) => k.kind === "p");
-    const others = n.children.filter((k) => k.kind !== "p");
+    const ps = n.children.filter((k) => k.kind === "p" && !k.children.length);
+    const others = n.children.filter((k) => k.kind !== "p" || k.children.length);
     if (ql && !hasHit(n)) return null;
     if (!n.children.length)
       return <div key={n.key} style={{ padding: "8px 12px 8px 22px", color: n.kind === "e" ? "var(--muted)" : "var(--ink2)", fontSize: 14 }}>{n.label} {n.kind === "e" ? <span className="tiny">· сул суудал</span> : null}</div>;
     const c = countP(n);
     return (
-      <details key={n.key + (ql ? ":q" : "")} className={lv === 0 ? "lv0" : ""} open={ql ? true : lv < 2 || others.length === 0}>
-        <summary><span className="chev"><Icon n="right" s={16} /></span><span style={{ flex: 1 }}>{n.label}</span>{c ? <span className="chip">{c}</span> : null}</summary>
+      <details key={n.key + (ql ? ":q" : "")} className={lv === 0 ? "lv0" : ""} open={ql ? true : n.key !== "net:none" && (lv < 2 || others.length === 0)}>
+        <summary><span className="chev"><Icon n="right" s={16} /></span>{n.kind === "p" ? <span style={{ flex: 1 }} onClick={(e) => e.preventDefault()}>{chip(n)}</span> : <span style={{ flex: 1 }}>{n.label}</span>}{c ? <span className="chip">{c}</span> : null}</summary>
         {others.map((k) => rec(k, lv + 1))}
         {ps.length ? <div className="pchips">{ps.map(chip)}</div> : null}
       </details>

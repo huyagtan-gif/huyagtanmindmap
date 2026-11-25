@@ -1,16 +1,17 @@
 import { MapView, type MPerson } from "@/components/MapView";
 import { auditText, fmtDateTime } from "@/lib/audit-text";
 import { loadLookups, loadOngods, loadPeople, loadPersonLinks, groupBy } from "@/lib/data";
+import { VIEWS, type ViewKey } from "@/lib/fields";
 import { asViewer, requirePerm } from "@/lib/viewer";
 
 export const metadata = { title: "Mind map" };
 
-export default async function MapPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
+export default async function MapPage({ searchParams }: { searchParams: Promise<{ view?: string; ego?: string }> }) {
   const v = await requirePerm("person.view");
   const sp = await searchParams;
   const d = await asViewer(v, async (q) => {
     const [lk, ongods, people, links, since, aliases, recent] = await Promise.all([
-      loadLookups(q), loadOngods(q), loadPeople(q, v, { registeredOnly: true }), loadPersonLinks(q),
+      loadLookups(q), loadOngods(q), loadPeople(q, v), loadPersonLinks(q),
       q<{ person_id: string; at: string }>("SELECT person_id, max(at)::text AS at FROM status_history GROUP BY person_id"),
       q<{ person_id: string; alias: string }>("SELECT person_id, alias FROM person_alias"),
       v.perms.has("audit.view")
@@ -34,7 +35,7 @@ export default async function MapPage({ searchParams }: { searchParams: Promise<
     const of = (k: string) => rf.filter((r) => r.key === k && vis.has(r.to_person_id)).map((r) => r.to_person_id);
     const n = (k: string) => rt.filter((r) => r.key === k).length;
     return {
-      id: p.id, name: p.name, clan: p.clan_name ?? null, status_id: p.status_id ?? null,
+      id: p.id, name: p.name, reg: !!p.is_registered, clan: p.clan_name ?? null, status_id: p.status_id ?? null,
       ongods: (po.get(p.id) || []).map((x) => x.ongod_id),
       deedes: (pd.get(p.id) || []).map((x) => dName.get(x.deedes_id)).filter(Boolean) as string[],
       supporters: of("supporter"), teachers: of("teacher"), introducers: of("introducer"),
@@ -45,6 +46,9 @@ export default async function MapPage({ searchParams }: { searchParams: Promise<
       nStudents: n("teacher"), nIntroduced: n("introducer"), nSupported: n("supporter"),
     };
   });
+  // P2.2: түвшин бүрт зөвшөөрөгдсөн харагдац (role_view).
+  const views = VIEWS.map((x) => x.key).filter((k) => v.views.has(k)) as ViewKey[];
+  const initialView = views.includes(sp.view as ViewKey) ? (sp.view as ViewKey) : views[0] ?? "tree";
   return (
     <MapView
       urguuName={v.urguu.name}
@@ -54,7 +58,10 @@ export default async function MapPage({ searchParams }: { searchParams: Promise<
       people={people}
       canStatus={v.perms.has("status.change")}
       canEdit={v.perms.has("person.edit")}
-      initialView={sp.view === "kanban" ? "kanban" : "tree"}
+      views={views}
+      initialView={initialView}
+      meId={v.personId}
+      initialEgo={sp.ego && vis.has(sp.ego) ? sp.ego : null}
       recent={d.recent.map((a: any) => ({ what: auditText(a), who: a.who || "Систем", at: fmtDateTime(a.at) }))}
     />
   );
