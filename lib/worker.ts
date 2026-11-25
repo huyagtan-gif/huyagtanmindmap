@@ -2,6 +2,7 @@ import { processOutbox } from "./outbox";
 import { purgeOtps } from "./otp";
 import { logError, purgeErrors } from "./errors";
 import { sendReminders } from "./reminders";
+import { dailyReconciliation, reconcilePending } from "./payments";
 
 // Дэвсгэр ажилчин: нэг процесс, минут тутам. Outbox-ын хугацаа болсон мэдэгдлийг илгээнэ, хуучин кодыг цэвэрлэнэ.
 const g = globalThis as unknown as { __worker?: boolean };
@@ -17,6 +18,9 @@ export function startWorker() {
     try {
       await processOutbox();
       if (n % 10 === 0) await sendReminders(); // P3.9
+      if (n % 15 === 0) await reconcilePending(); // P4.3: 15 минут тутам
+      // P4.3: өдөр бүр Улаанбаатарын 02:00-оос хойш өмнөх өдрийн тулгалт (нэг удаа)
+      if (n % 30 === 0 && new Date(Date.now() + 8 * 3600_000).getUTCHours() >= 2) await dailyReconciliation();
       if (n++ % 60 === 0) {
         await purgeOtps();
         await purgeErrors();

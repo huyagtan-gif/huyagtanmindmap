@@ -515,4 +515,104 @@ d("өгөгдлийн сан: миграци, RLS, audit, импорт", () => {
     const t = (await db.sys("SELECT template FROM notification_outbox WHERE recipient = 'remind-me@example.com' ORDER BY id")).map((x) => x.template);
     expect(t).toEqual(["event_reminder", "training_reminder"]);
   });
+
+  /* ---------------- Phase 4 ---------------- */
+  it("төлбөр: нэхэмжлэх давхардахгүй, callback олон ирсэн ч нэг л удаа «Төлсөн» болно, апп-ын role бичихгүй (P4.2, P4.3)", async () => {
+    process.env.QPAY_MOCK = "1";
+    const { startPayment, verifyPayment, callbackSig, callbackSigValid } = await import("@/lib/payments");
+    const { mockPay } = await import("@/lib/qpay");
+    const tid = await mkTraining(A, { fee: 30000 });
+    const [p1] = await mkPeople(1);
+    const [{ id: part }] = await db.sys("INSERT INTO training_participant (training_id, person_id, state, pay_state) VALUES ($1,$2,'yes','pending') RETURNING id", [tid, p1]);
+    const o = { urguuId: A, kind: "training" as const, amount: 30000, description: "Туршилт", payerPersonId: p1, trainingId: tid, participantId: part };
+    const a = await startPayment({ urguuId: A }, o);
+    const b = await startPayment({ urguuId: A }, o);
+    expect(b.payment.id).toBe(a.payment.id);
+    expect(a.payment.qpay_invoice_id).toMatch(/^mock-/);
+    expect(await verifyPayment(a.payment.id)).toBe("pending");
+    mockPay(a.payment.qpay_invoice_id!, 10000); // дутуу төлөлт
+    expect(await verifyPayment(a.payment.id)).toBe("pending");
+    mockPay(a.payment.qpay_invoice_id!);
+    expect(await Promise.all([verifyPayment(a.payment.id), verifyPayment(a.payment.id)])).toEqual(["paid", "paid"]);
+    expect((await db.sys("SELECT pay_state FROM training_participant WHERE id = $1", [part]))[0].pay_state).toBe("paid");
+    expect((await db.sys("SELECT count(*)::int AS n FROM audit_log WHERE entity = 'payment' AND entity_id = $1 AND after->>'state' = 'paid' AND before->>'state' = 'pending'", [a.payment.id]))[0].n).toBe(1);
+    expect(callbackSigValid(a.payment.id, callbackSig(a.payment.id))).toBe(true);
+    expect(callbackSigValid(a.payment.id, "x".repeat(22))).toBe(false);
+    // апп-ын role: төлбөрийг уншина, бичихгүй; QPay тохиргоо, тулгалтыг огт харахгүй
+    await db.withCtx({ personId: admin, urguuId: A }, async (q) => {
+      expect(await q("SELECT 1 FROM payment WHERE id = $1", [a.payment.id])).toHaveLength(1);
+    });
+    for (const sql of ["UPDATE payment SET state = 'paid'", "INSERT INTO payment (urguu_id, kind, amount, sender_invoice_no) VALUES (app_urguu(), 'donation', 1000, 'x')", "SELECT * FROM urguu_payment_config", "SELECT * FROM payment_recon"])
+      await expect(db.withCtx({ personId: admin, urguuId: A }, (q) => q(sql))).rejects.toThrow(/permission denied/);
+    expect(await db.withCtx({ personId: admin, urguuId: B }, (q) => q("SELECT 1 FROM payment WHERE id = $1", [a.payment.id]))).toHaveLength(0);
+    // төлөгч өөрийн төлбөрөө аль ч өргөөнөөс харна
+    expect(await db.withCtx({ personId: p1, urguuId: B }, (q) => q("SELECT 1 FROM payment WHERE id = $1", [a.payment.id]))).toHaveLength(1);
+  });
+
+  it("төлбөр: 48 цагаас хуучин нэхэмжлэх дуусна, өдрийн тулгалт зөрүүг илрүүлж нэг удаа бүртгэнэ (P4.3)", async () => {
+    const { startPayment, reconcilePending, dailyReconciliation } = await import("@/lib/payments");
+    const { mockPay } = await import("@/lib/qpay");
+    const old = await startPayment({ urguuId: A }, { urguuId: A, kind: "donation", amount: 5000, description: "Хуучин" });
+    await db.sys("UPDATE payment SET created_at = now() - interval '49 hours' WHERE id = $1", [old.payment.id]);
+    const late = await startPayment({ urguuId: A }, { urguuId: A, kind: "donation", amount: 7000, description: "Хоцорсон" });
+    mockPay(late.payment.qpay_invoice_id!);
+    const r = await reconcilePending();
+    expect(r.paid).toBeGreaterThanOrEqual(1);
+    const st = Object.fromEntries((await db.sys("SELECT id, state FROM payment WHERE id = ANY($1::uuid[])", [[old.payment.id, late.payment.id]])).map((x) => [x.id, x.state]));
+    expect(st).toEqual({ [old.payment.id]: "expired", [late.payment.id]: "paid" });
+    // Өчигдөр төлөгдсөн гэж бүртгэгдсэн боловч QPay дээр өөр дүнтэй төлбөр
+    const bad = await startPayment({ urguuId: A }, { urguuId: A, kind: "donation", amount: 9000, description: "Зөрүү" });
+    mockPay(bad.payment.qpay_invoice_id!, 8000);
+    const now = new Date();
+    const yday = new Date(now.getTime() + 8 * 3600_000 - 86400_000).toISOString().slice(0, 10);
+    await db.sys("UPDATE payment SET state = 'paid', paid_at = $2 WHERE id = $1", [bad.payment.id, new Date(`${yday}T12:00:00+08:00`)]);
+    const rep = await dailyReconciliation(now);
+    expect(rep).toMatchObject({ day: yday, mismatches: 1 });
+    expect(await dailyReconciliation(now)).toBeNull();
+    const [row] = await db.sys("SELECT mismatches FROM payment_recon WHERE day = $1", [yday]);
+    expect(row.mismatches[0]).toMatchObject({ id: bad.payment.id, expected: 9000, got: 8000 });
+  });
+
+  it("буцаалт, гараар төлөх, хамтрагч өргөөний хувь (P4.5, P4.6)", async () => {
+    const { markRefunded, markManualPaid } = await import("@/lib/payments");
+    const { financeReport, finRange } = await import("@/lib/finance");
+    const tid = await mkTraining(A, { fee: 40000 });
+    await db.sys("INSERT INTO training_urguu (training_id, urguu_id, is_lead, share_pct) VALUES ($1,$2,true,75), ($1,$3,false,25)", [tid, A, B]);
+    const ps = await mkPeople(3);
+    const parts = (await db.sys("INSERT INTO training_participant (training_id, person_id, state, pay_state) SELECT $1, unnest($2::uuid[]), 'yes', 'pending' RETURNING id", [tid, ps])).map((x) => x.id);
+    expect(await markManualPaid({ personId: admin, urguuId: A }, { urguuId: B, trainingId: tid, participantIds: parts, note: null })).toBe(0); // өөр өргөө
+    expect(await markManualPaid({ personId: admin, urguuId: A }, { urguuId: A, trainingId: tid, participantIds: parts, note: "бэлнээр" })).toBe(3);
+    expect(await markManualPaid({ personId: admin, urguuId: A }, { urguuId: A, trainingId: tid, participantIds: parts, note: null })).toBe(0);
+    const [one] = await db.sys("SELECT id FROM payment WHERE participant_id = $1", [parts[0]]);
+    expect(await markRefunded({ personId: admin, urguuId: B }, B, one.id, "x")).toBe(false);
+    expect(await markRefunded({ personId: admin, urguuId: A }, A, one.id, "Өвчтэй")).toBe(true);
+    expect(await markRefunded({ personId: admin, urguuId: A }, A, one.id, "давхар")).toBe(false);
+    expect((await db.sys("SELECT pay_state FROM training_participant WHERE id = $1", [parts[0]]))[0].pay_state).toBe("refunded");
+    const r = finRange();
+    const lead = await db.withCtx({ personId: admin, urguuId: A }, (q) => financeReport(q, r));
+    const row = lead.trainings.find((t) => t.id === tid)!;
+    expect(row).toMatchObject({ paid_count: 2, gross: 80000, refunded: 40000 });
+    expect(row.shares.map((s) => [s.pct, s.amount])).toEqual([[75, 60000], [25, 20000]]);
+    // Хамтрагч өргөө: нэгтгэсэн дүн ба өөрийн хувь л харагдана, төлбөрийн мөр харагдахгүй
+    const partner = await db.withCtx({ personId: admin, urguuId: B }, (q) => financeReport(q, r));
+    expect(partner.partner.find((p) => p.training_id === tid)).toMatchObject({ gross: 80000, share_pct: 25, share: 20000 });
+    expect(await db.withCtx({ personId: admin, urguuId: B }, (q) => q("SELECT 1 FROM payment WHERE training_id = $1", [tid]))).toHaveLength(0);
+  });
+
+  it("QPay нууц үг шифрлэгдэнэ; хүнийг устгахад төлбөрийн мөр үлдэж, нэр, ул мөр арилна (P4.1, P2.8)", async () => {
+    process.env.AUTH_SECRET ||= "test-secret-only-for-vitest";
+    const { encrypt, decrypt } = await import("@/lib/secret");
+    const enc = encrypt("merchant-pass");
+    expect(enc).not.toContain("merchant-pass");
+    expect(decrypt(enc)).toBe("merchant-pass");
+    expect(() => decrypt(enc.slice(0, -2) + "AA")).toThrow();
+    const { startPayment } = await import("@/lib/payments");
+    const { erasePerson } = await import("@/lib/privacy");
+    const [p] = await mkPeople(1);
+    const pay = await startPayment({ urguuId: A }, { urguuId: A, kind: "donation", amount: 3000, description: "Хандив", payerPersonId: p, payerName: "Нууц Хандивлагч", message: "ерөөл" });
+    await db.sysTx({ urguuId: A }, (q) => erasePerson(q, p));
+    const [row] = await db.sys("SELECT payer_person_id, payer_name, message, amount FROM payment WHERE id = $1", [pay.payment.id]);
+    expect(row).toEqual({ payer_person_id: null, payer_name: null, message: null, amount: 3000 });
+    expect(await db.sys("SELECT 1 FROM audit_log WHERE before::text LIKE '%Нууц Хандивлагч%' OR after::text LIKE '%Нууц Хандивлагч%'")).toHaveLength(0);
+  });
 });

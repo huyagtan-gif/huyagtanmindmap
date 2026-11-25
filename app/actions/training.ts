@@ -71,6 +71,9 @@ export async function saveTraining(fd: FormData) {
         await q("DELETE FROM training_teacher WHERE training_id = $1 AND NOT (person_id = ANY($2::uuid[]))", [tid, teachers]);
         for (const p of teachers) await q("INSERT INTO training_teacher (training_id, person_id) SELECT $1, id FROM person WHERE id = $2 ON CONFLICT DO NOTHING", [tid, p]);
       }
+      // Үнэ өөрчлөгдвөл: төлбөртэй болсон бол оролцогчид «Хүлээгдэж буй», үнэгүй болсон бол төлөөгүй хүмүүс «—».
+      await q(`UPDATE training_participant SET pay_state = CASE WHEN $2 > 0 THEN 'pending' ELSE 'none' END
+               WHERE training_id = $1 AND state = 'yes' AND pay_state = CASE WHEN $2 > 0 THEN 'none' ELSE 'pending' END`, [tid, fee]);
       promoted = await promoteWaitlist(q, tid);
       await syncFieldTraining(q, (await q<{ person_id: string }>("SELECT person_id FROM training_participant WHERE training_id = $1 AND completion = 'completed'", [tid])).map((r) => r.person_id));
     } else {

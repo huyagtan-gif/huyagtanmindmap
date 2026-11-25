@@ -31,6 +31,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (p.has("ongod.edit")) items.push({ href: "/admin/ongod", name: "Онгодын мод", icon: "home", admin: true });
   if (p.has("settings.manage")) items.push({ href: "/admin/settings", name: "Тохиргоо", icon: "gear", admin: true });
   if (p.has("import.run") || p.has("person.merge")) items.push({ href: "/admin/import", name: "Импорт, нэгтгэл", icon: "share", admin: true });
+  if (p.has("finance.view") || p.has("payment.manage")) items.push({ href: "/admin/finance", name: "Санхүү", icon: "money", admin: true });
   if (p.has("audit.view")) items.push({ href: "/admin/audit", name: "Өөрчлөлтийн түүх", icon: "log", admin: true });
   if (v.isPlatformAdmin && !v.viewAs) items.push({ href: "/admin/system", name: "Систем", icon: "sys", admin: true });
   if (p.has("world.view")) items.splice(2, 0, { href: "/world", name: "Дэлхийн үрс", short: "Дэлхий", icon: "globe" });

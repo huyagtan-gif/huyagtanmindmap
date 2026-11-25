@@ -28,6 +28,7 @@ export async function exportOwnData(personId: string) {
               (SELECT count(*)::int FROM training_attendance ta WHERE ta.training_id = t.id AND ta.person_id = tp.person_id) AS sessions_attended
        FROM training_participant tp JOIN training t ON t.id = tp.training_id WHERE tp.person_id = $1 ORDER BY tp.created_at`),
     training_surveys: await all("SELECT t.name, s.rating, s.comment, s.created_at FROM training_survey s JOIN training t ON t.id = s.training_id WHERE s.person_id = $1 ORDER BY s.created_at"),
+    payments: await all("SELECT kind, amount, state, method, anonymous, message, sender_invoice_no, paid_at, refunded_at, created_at FROM payment WHERE payer_person_id = $1 ORDER BY created_at"),
     consents: await all("SELECT version, at FROM consent WHERE person_id = $1 ORDER BY at"),
     data_requests: await all("SELECT kind, state, note, created_at, decided_at FROM data_request WHERE person_id = $1 ORDER BY created_at"),
   };
@@ -45,6 +46,8 @@ export async function erasePerson(q: Q, personId: string): Promise<{ email: stri
   const priv = await q<{ phone: string | null; email: string | null }>("SELECT phone, email FROM person_private WHERE person_id = ANY($1::uuid[])", [ids]);
   const emails = [...new Set(priv.map((p) => p.email?.toLowerCase()).filter(Boolean))] as string[];
   const phones = [...new Set(priv.map((p) => p.phone).filter(Boolean))] as string[];
+  // Санхүүгийн бүртгэл (дүн, огноо) нягтлан бодох зорилгоор үлдэнэ, харин хүнтэй холбох мэдээлэл арилна.
+  await q("UPDATE payment SET payer_name = NULL, message = NULL, anonymous = true WHERE payer_person_id = ANY($1::uuid[])", [ids]);
   const users = await q<{ email: string | null }>("DELETE FROM users WHERE person_id = ANY($1::uuid[]) RETURNING email", [ids]); // sessions, accounts дагаж устна
   for (const u of users) if (u.email && !emails.includes(u.email.toLowerCase())) emails.push(u.email.toLowerCase());
   await q("DELETE FROM verification_token WHERE lower(identifier) = ANY($1)", [emails]);
@@ -57,7 +60,8 @@ export async function erasePerson(q: Q, personId: string): Promise<{ email: stri
   await q(
     `DELETE FROM audit_log WHERE entity_id = ANY($1)
        OR coalesce(before, after)->>'person_id' = ANY($1) OR coalesce(before, after)->>'from_person_id' = ANY($1) OR coalesce(before, after)->>'to_person_id' = ANY($1)
-       OR (entity = 'invite' AND lower(coalesce(before, after)->>'email') = ANY($2))`,
+       OR (entity = 'invite' AND lower(coalesce(before, after)->>'email') = ANY($2))
+       OR (entity = 'payment' AND (before->>'payer_person_id' = ANY($1) OR after->>'payer_person_id' = ANY($1)))`,
     [t, emails],
   );
   await q("UPDATE audit_log SET actor_person_id = NULL WHERE actor_person_id = ANY($1::uuid[])", [ids]);
