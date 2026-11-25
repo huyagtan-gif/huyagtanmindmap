@@ -58,6 +58,7 @@ export default async function MapPage({ searchParams }: { searchParams: Promise<
       people={people}
       canStatus={v.perms.has("status.change")}
       canEdit={v.perms.has("person.edit")}
+      canExport={v.perms.has("export.csv")}
       views={views}
       initialView={initialView}
       meId={v.personId}

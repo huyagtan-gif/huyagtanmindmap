@@ -289,4 +289,69 @@ d("өгөгдлийн сан: миграци, RLS, audit, импорт", () => {
     expect((await loadWorld(viewer)).urguus.map((u) => u.id)).toEqual([A]);
     await db.sys("UPDATE urguu SET state = 'active' WHERE id = $1", [C]);
   });
+
+  it("өөрийн өгөгдөл татах ба бүрмөсөн устгах: ул мөр үлдэхгүй, бусдын өгөгдөл хэвээр (P2.8)", async () => {
+    const { erasePerson, exportOwnData } = await import("@/lib/privacy");
+    const [other] = await db.sys("INSERT INTO person (given_name, created_urguu_id) VALUES ('Үлдэх-хүн', $1) RETURNING id", [A]);
+    // Устгагдах хүн: гишүүн, холбоо барих мэдээлэл, харилцаа (хоёр чиглэлд), нэрийн хувилбар, нэвтрэх хэрэглэгч, сешн
+    const pid = await db.withCtx({ userId: 9, personId: admin, urguuId: A }, async (q) => {
+      const [p] = await q("INSERT INTO person (father_name, given_name, comment, created_urguu_id) VALUES ('Устах', 'Мартагдах-хүн', 'нууц сэтгэгдэл', $1) RETURNING id", [A]);
+      await q("INSERT INTO person_private (person_id, phone, email) VALUES ($1, '+97660006000', 'erase-me@example.com')", [p.id]);
+      await q("INSERT INTO membership (person_id, urguu_id, role_id, state) SELECT $1, $2, id, 'approved' FROM role WHERE urguu_id = $2 AND NOT is_system LIMIT 1", [p.id, A]);
+      await q("INSERT INTO person_alias (person_id, alias, norm) VALUES ($1, 'Мартагдах', 'martagdah')", [p.id]);
+      const [t] = await q("SELECT id FROM relation_type WHERE key = 'teacher'");
+      await q("INSERT INTO relation (from_person_id, to_person_id, type_id) VALUES ($1, $2, $3), ($2, $1, $3)", [p.id, other.id, t.id]);
+      await q("UPDATE person SET comment = 'шинэчилсэн нууц' WHERE id = $1", [p.id]);
+      return p.id as string;
+    });
+    const [u] = await db.sys("INSERT INTO users (email, person_id) VALUES ('erase-me@example.com', $1) RETURNING id", [pid]);
+    await db.sys(`INSERT INTO sessions ("userId", expires, "sessionToken") VALUES ($1, now() + interval '1 day', 'erase-token')`, [u.id]);
+    await db.sys("INSERT INTO notification_outbox (recipient, template, state) VALUES ('erase-me@example.com', 'magic_link', 'sent')");
+    // Устгагдах хүн бусдын хүсэлтийг шийдвэрлэсэн байсан ч устгалд саад болохгүй
+    await db.sys("UPDATE membership SET decided_by = $1 WHERE person_id = $2", [pid, admin]);
+    const [req] = await db.sys("INSERT INTO data_request (person_id, urguu_id, note) VALUES ($1, $2, 'устгана уу') RETURNING id", [pid, A]);
+    await expect(db.sys("INSERT INTO data_request (person_id, urguu_id) VALUES ($1, $2)", [pid, A])).rejects.toThrow(/data_request_one_pending/);
+
+    const mine = await exportOwnData(pid);
+    expect(mine.person).toMatchObject({ given_name: "Мартагдах-хүн", comment: "шинэчилсэн нууц" });
+    expect(mine.contact).toMatchObject({ phone: "+97660006000", email: "erase-me@example.com" });
+    expect(mine.relations_from_me).toHaveLength(1);
+    expect(mine.relations_to_me).toHaveLength(1);
+    expect(mine.memberships).toHaveLength(1);
+    expect(JSON.stringify(mine)).not.toMatch(/b-secret|world\.example/); // бусдын мэдээлэл орохгүй
+
+    expect((await db.sys("SELECT count(*)::int AS n FROM audit_log WHERE entity_id = $1 OR before::text LIKE '%erase-me%' OR after::text LIKE '%erase-me%'", [pid]))[0].n).toBeGreaterThan(0);
+    const r = await db.sysTx({ userId: 9, personId: admin, urguuId: A }, async (q) => {
+      const out = await erasePerson(q, pid);
+      await q("UPDATE data_request SET state = 'approved', decided_by = $2, decided_at = now(), note = NULL WHERE id = $1", [req.id, admin]);
+      return out;
+    });
+    expect(r.email).toBe("erase-me@example.com");
+
+    for (const [sql, args] of [
+      ["SELECT 1 FROM person WHERE id = $1", [pid]], ["SELECT 1 FROM person_private WHERE person_id = $1", [pid]], ["SELECT 1 FROM membership WHERE person_id = $1", [pid]],
+      ["SELECT 1 FROM relation WHERE from_person_id = $1 OR to_person_id = $1", [pid]], ["SELECT 1 FROM person_alias WHERE person_id = $1", [pid]],
+      ["SELECT 1 FROM users WHERE id = $1", [u.id]], ["SELECT 1 FROM sessions WHERE \"sessionToken\" = 'erase-token'", []],
+      ["SELECT 1 FROM notification_outbox WHERE recipient = 'erase-me@example.com'", []],
+    ] as [string, unknown[]][]) expect(await db.sys(sql, args), sql).toHaveLength(0);
+    // Өөрчлөлтийн түүхэнд энэ хүний нэр, утас, имэйл, сэтгэгдэл, id-ийн ул мөр үлдээгүй
+    const [leak] = await db.sys(
+      `SELECT count(*)::int AS n FROM audit_log WHERE entity_id = $1 OR coalesce(before::text, '') || coalesce(after::text, '') ~ $2`,
+      [pid, `erase-me|60006000|Мартагдах|нууц сэтгэгдэл|шинэчилсэн нууц|${pid}`]);
+    expect(leak.n).toBe(0);
+    expect(await db.sys("SELECT 1 FROM audit_log WHERE entity = 'person' AND action = 'erase' AND actor_person_id = $1", [admin])).toHaveLength(1);
+    // Хүсэлтийн бүртгэл үлдэнэ (хэн, хэзээ баталсан), гэхдээ хүнтэй холбоогүй, тайлбаргүй
+    expect((await db.sys("SELECT person_id, state, note, decided_by FROM data_request WHERE id = $1", [req.id]))[0]).toEqual({ person_id: null, state: "approved", note: null, decided_by: admin });
+    // Бусад хүн, тэдний гишүүнчлэл хэвээр; зөвхөн устсан хүн рүү заасан холбоос цэвэрлэгдсэн
+    expect(await db.sys("SELECT 1 FROM person WHERE id = $1", [other.id])).toHaveLength(1);
+    expect((await db.sys("SELECT state, decided_by FROM membership WHERE person_id = $1 AND urguu_id = $2", [admin, A]))[0]).toEqual({ state: "approved", decided_by: null });
+  });
+
+  it("устгах хүсэлт: өөр өргөөний админ харахгүй, апп-ын role устгаж чадахгүй (P2.8)", async () => {
+    const [p] = await db.sys("INSERT INTO person (given_name, created_urguu_id) VALUES ('Хүсэлт-гаргагч', $1) RETURNING id", [A]);
+    await db.sys("INSERT INTO data_request (person_id, urguu_id) VALUES ($1, $2)", [p.id, A]);
+    expect(await db.withCtx({ personId: admin, urguuId: A }, (q) => q("SELECT 1 FROM data_request WHERE person_id = $1", [p.id]))).toHaveLength(1);
+    expect(await db.withCtx({ personId: admin, urguuId: B }, (q) => q("SELECT 1 FROM data_request WHERE person_id = $1", [p.id]))).toHaveLength(0);
+    await expect(db.withCtx({ personId: admin, urguuId: A }, (q) => q("DELETE FROM data_request"))).rejects.toThrow(/permission denied/);
+  });
 });

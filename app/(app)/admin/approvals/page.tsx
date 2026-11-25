@@ -1,4 +1,5 @@
 import { decideMembership, revokeInvite, sendInvite } from "@/app/actions/admin";
+import { decideDeletion } from "@/app/actions/privacy";
 import { ConfirmButton } from "@/components/AutoSubmit";
 import { Flash } from "@/components/Flash";
 import { Avatar, Empty } from "@/components/ui";
@@ -9,10 +10,11 @@ import { asViewer, requirePerm } from "@/lib/viewer";
 export const metadata = { title: "Бүртгэл батлах" };
 
 export default async function Approvals({ searchParams }: { searchParams: Promise<{ m?: string }> }) {
-  const v = await requirePerm("member.approve", "invite.send");
+  const v = await requirePerm("member.approve", "invite.send", "data.request");
   const sp = await searchParams;
   const canApprove = v.perms.has("member.approve");
   const canInvite = v.perms.has("invite.send");
+  const canData = v.perms.has("data.request");
   const d = await asViewer(v, async (q) => ({
     pending: canApprove
       ? await q<{ id: string; clan_name: string | null; father_name: string | null; given_name: string; phone: string | null; email: string | null; email_verified: boolean; created_at: Date; role_id: string | null }>(
@@ -21,6 +23,12 @@ export default async function Approvals({ searchParams }: { searchParams: Promis
            WHERE m.urguu_id = app_urguu() AND m.state = 'pending' ORDER BY m.created_at`)
       : [],
     roles: await q<{ id: string; name: string; is_system: boolean }>("SELECT id, name, is_system FROM role ORDER BY sort"),
+    // P2.8: өгөгдлөө устгуулах хүсэлтүүд
+    dels: canData
+      ? await q<{ id: string; person_id: string; father_name: string | null; given_name: string; note: string | null; created_at: Date }>(
+          `SELECT d.id, d.person_id, p.father_name, p.given_name, d.note, d.created_at FROM data_request d JOIN person p ON p.id = d.person_id
+           WHERE d.urguu_id = app_urguu() AND d.state = 'pending' ORDER BY d.created_at`)
+      : [],
     invites: canInvite
       ? await q<{ id: string; email: string; role: string; expires_at: Date; used_at: Date | null }>(
           `SELECT i.id, i.email, r.name AS role, i.expires_at, i.used_at FROM invite i JOIN role r ON r.id = i.role_id ORDER BY i.created_at DESC LIMIT 50`)
@@ -36,6 +44,37 @@ export default async function Approvals({ searchParams }: { searchParams: Promis
       <Flash m={sp.m} />
       <div className="split">
         <div className="grow col g16">
+          {canData && d.dels.length ? (
+            <div className="card p0">
+              <div className="col g4" style={{ padding: "16px 16px 8px" }}>
+                <h2>Өгөгдлөө устгуулах хүсэлт · {d.dels.length}</h2>
+                <span className="small muted">Баталбал тухайн хүний бүртгэл, бүх хувийн мэдээлэл платформоос бүрмөсөн устна. Буцаах боломжгүй.</span>
+              </div>
+              {d.dels.map((r) => (
+                <div key={r.id} className="list-item" style={{ flexWrap: "wrap" }}>
+                  <Avatar name={displayName(r)} size={44} />
+                  <div className="col" style={{ flex: "1 1 220px", minWidth: 0 }}>
+                    <a href={`/people/${r.person_id}`} style={{ fontWeight: 600 }}>{displayName(r)}</a>
+                    {r.note ? <span className="small">{r.note}</span> : null}
+                    <span className="tiny muted">{fmtDateTime(r.created_at)}</span>
+                  </div>
+                  <div className="row wrap">
+                    {/* Шийдвэрийг товчны name/value-д найдахгүй, тус тусын формын нуугдмал талбараар дамжуулна. */}
+                    <form action={decideDeletion}>
+                      <input type="hidden" name="id" value={r.id} />
+                      <input type="hidden" name="decision" value="approve" />
+                      <ConfirmButton className="btn sm danger" message={`«${displayName(r)}»-ийн бүх өгөгдлийг бүрмөсөн устгах уу? Энэ үйлдлийг буцаах боломжгүй.`}>Баталж устгах</ConfirmButton>
+                    </form>
+                    <form action={decideDeletion}>
+                      <input type="hidden" name="id" value={r.id} />
+                      <input type="hidden" name="decision" value="reject" />
+                      <button className="btn sm">Татгалзах</button>
+                    </form>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
           {canApprove ? (
             <div className="card p0">
               <div style={{ padding: "16px 16px 8px" }}><h2>Хүлээгдэж буй хүсэлт · {d.pending.length}</h2></div>

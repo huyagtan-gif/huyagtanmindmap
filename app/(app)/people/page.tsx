@@ -37,6 +37,7 @@ export default async function People({ searchParams }: { searchParams: Promise<L
             </label>
           </form>
           {v.perms.has("export.csv") ? <a className="btn" href={`/people/export${qs({})}`}><Icon n="share" s={16} /><span className="hide-m">CSV</span></a> : null}
+          {v.perms.has("export.csv") ? <a className="btn" href={`/people/export${qs({ format: "xlsx" })}`}><Icon n="down2" s={16} /><span className="hide-m">Excel</span></a> : null}
           {canEdit ? <Link className="btn pri" href="/people?add=1"><Icon n="plus" s={16} w={2.4} /><span className="hide-m">Хүн нэмэх</span></Link> : null}
         </div>
       </div>

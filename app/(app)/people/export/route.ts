@@ -1,5 +1,6 @@
 import { loadPeopleList } from "@/lib/people-list";
 import { asViewer, getViewer } from "@/lib/viewer";
+import { buildXlsx } from "@/lib/xlsx";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +10,7 @@ const cell = (v: unknown) => {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
-/** P1.13: CSV экспорт (export.csv эрхтэй түвшинд). Багана бүр талбарын эрхээр шүүгдэнэ. */
+/** P1.13 / P2.6: CSV эсвэл Excel (?format=xlsx) экспорт (export.csv эрхтэй түвшинд). Багана бүр талбарын эрхээр шүүгдэнэ. */
 export async function GET(req: Request) {
   const v = await getViewer();
   if (!v || v.membershipState !== "approved" || !v.perms.has("export.csv") || !v.perms.has("person.view")) return new Response("Forbidden", { status: 403 });
@@ -31,11 +32,22 @@ export async function GET(req: Request) {
     ["Сэтгэгдэл", (r) => r.comment, "comment"], ["Санал", (r) => r.suggestion, "suggestion"],
   ];
   const use = cols.filter(([, , gate]) => !gate || v.fields.has(gate));
+  const day = new Date().toISOString().slice(0, 10);
+  if (sp.format === "xlsx") {
+    const buf = buildXlsx("Хүмүүс", use.map(([h]) => h), rows.map((r) => use.map(([, f]) => f(r))));
+    return new Response(new Uint8Array(buf), {
+      headers: {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="huyagtan-${day}.xlsx"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  }
   const csv = [use.map(([h]) => cell(h)).join(","), ...rows.map((r) => use.map(([, f]) => cell(f(r))).join(","))].join("\r\n");
   return new Response("﻿" + csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="huyagtan-${new Date().toISOString().slice(0, 10)}.csv"`,
+      "Content-Disposition": `attachment; filename="huyagtan-${day}.csv"`,
       "Cache-Control": "no-store",
     },
   });

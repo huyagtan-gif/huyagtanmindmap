@@ -11,9 +11,10 @@ export const dynamic = "force-dynamic";
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const v = await requireMember();
   const { pending, roles } = await asViewer(v, async (q) => {
-    const pending = v.perms.has("member.approve")
+    let pending = v.perms.has("member.approve")
       ? Number((await q<{ n: string }>("SELECT count(*) AS n FROM membership WHERE urguu_id = app_urguu() AND state = 'pending'"))[0].n)
       : 0;
+    if (v.perms.has("data.request")) pending += Number((await q<{ n: string }>("SELECT count(*) AS n FROM data_request WHERE urguu_id = app_urguu() AND state = 'pending'"))[0].n);
     const roles = v.canViewAs ? await q<{ id: string; name: string }>("SELECT id, name FROM role ORDER BY sort") : [];
     return { pending, roles };
   });
@@ -23,7 +24,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/me", name: "Миний мэдээлэл", short: "Би", icon: "me" },
   ];
   const p = v.perms;
-  if (p.has("member.approve") || p.has("invite.send")) items.push({ href: "/admin/approvals", name: "Бүртгэл батлах", short: "Батлах", icon: "check", badge: pending, admin: true });
+  if (p.has("member.approve") || p.has("invite.send") || p.has("data.request")) items.push({ href: "/admin/approvals", name: "Бүртгэл батлах", short: "Батлах", icon: "check", badge: pending, admin: true });
   if (p.has("ongod.edit")) items.push({ href: "/admin/ongod", name: "Онгодын мод", icon: "home", admin: true });
   if (p.has("settings.manage")) items.push({ href: "/admin/settings", name: "Тохиргоо", icon: "gear", admin: true });
   if (p.has("import.run") || p.has("person.merge")) items.push({ href: "/admin/import", name: "Импорт, нэгтгэл", icon: "share", admin: true });

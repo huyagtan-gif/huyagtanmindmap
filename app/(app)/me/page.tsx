@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { confirmPhoneVerify, requestJoin, requestPhoneVerify } from "@/app/actions/auth";
+import { cancelDeletion, requestDeletion } from "@/app/actions/privacy";
+import { ConfirmButton } from "@/components/AutoSubmit";
 import { PersonForm } from "@/components/PersonForm";
 import { sys } from "@/lib/db";
 import { smsMode } from "@/lib/sms";
@@ -24,7 +26,7 @@ const PV: Record<string, [string, string]> = {
   format: ["bad", "Утасны дугаарын хэлбэр буруу байна. Формдоо засаж хадгална уу."],
 };
 
-export default async function Me({ searchParams }: { searchParams: Promise<{ e?: string; saved?: string; pv?: string; j?: string }> }) {
+export default async function Me({ searchParams }: { searchParams: Promise<{ e?: string; saved?: string; pv?: string; j?: string; d?: string }> }) {
   const v = await requireMember();
   const sp = await searchParams;
   // Өөрийн мөр: системийн холболтоор зөвхөн өөрийн person_id-аар уншина.
@@ -36,11 +38,19 @@ export default async function Me({ searchParams }: { searchParams: Promise<{ e?:
      WHERE m.person_id = $1 AND u.state = 'active' ORDER BY m.created_at`, [v.personId]);
   const joinable = await sys<{ id: string; name: string }>(
     "SELECT id, name FROM urguu u WHERE state = 'active' AND NOT EXISTS (SELECT 1 FROM membership m WHERE m.urguu_id = u.id AND m.person_id = $1 AND m.state <> 'rejected') ORDER BY created_at", [v.personId]);
+  const [delReq] = await sys<{ created_at: Date }>("SELECT created_at FROM data_request WHERE person_id = $1 AND state = 'pending'", [v.personId]);
+  const D: Record<string, [string, string]> = {
+    sent: ["ok", "Хүсэлт илгээгдлээ. Өргөөний админ шийдвэрлэсний дараа имэйлээр мэдэгдэнэ."],
+    cancelled: ["info", "Хүсэлт цуцлагдлаа."],
+    confirm: ["bad", "Үргэлжлүүлэхийн тулд чагтыг тэмдэглэнэ үү."],
+    rate: ["bad", "Хэт олон хүсэлт илгээлээ. Дараа дахин оролдоно уу."],
+    super: ["bad", "Платформын супер админы бүртгэлийг энэ замаар устгах боломжгүй."],
+  };
   const MS: Record<string, [string, string]> = { approved: ["ok", "Батлагдсан"], pending: ["warn", "Хүлээгдэж буй"], rejected: ["bad", "Татгалзсан"], closed: ["", "Хаагдсан"] };
   const pv = sp.pv ? PV[sp.pv] : null;
   const p = v.perms;
   const admin = [
-    (p.has("member.approve") || p.has("invite.send")) && ["/admin/approvals", "Бүртгэл батлах"],
+    (p.has("member.approve") || p.has("invite.send") || p.has("data.request")) && ["/admin/approvals", "Бүртгэл батлах"],
     p.has("ongod.edit") && ["/admin/ongod", "Онгодын мод"],
     p.has("settings.manage") && ["/admin/settings", "Тохиргоо"],
     (p.has("import.run") || p.has("person.merge")) && ["/admin/import", "Импорт, нэгтгэл"],
@@ -111,6 +121,32 @@ export default async function Me({ searchParams }: { searchParams: Promise<{ e?:
           ) : null}
         </div>
       ) : null}
+      <div className="card col g12" id="data">
+        <h2>Миний өгөгдөл</h2>
+        {sp.d && D[sp.d] ? <div className={`banner ${D[sp.d][0]}`} role="status">{D[sp.d][1]}</div> : null}
+        <div className="row wrap between">
+          <span className="small muted" style={{ flex: "1 1 260px" }}>Системд хадгалагдсан өөрийн бүх мэдээллийн хуулбарыг файлаар татаж авна.</span>
+          <a className="btn sm" href="/me/export">Өгөгдлөө татах (JSON)</a>
+        </div>
+        <div style={{ borderTop: "1px solid var(--line)", paddingTop: 12 }} className="col g12">
+          {delReq ? (
+            <div className="row wrap between">
+              <span className="small">Бүртгэлээ устгуулах хүсэлт <b>хүлээгдэж байна</b>. Өргөөний админ шийдвэрлэнэ.</span>
+              <form action={cancelDeletion}><button className="btn sm">Хүсэлтээ цуцлах</button></form>
+            </div>
+          ) : (
+            <details>
+              <summary className="small" style={{ cursor: "pointer", fontWeight: 600 }}>Бүртгэл, өгөгдлөө устгуулах</summary>
+              <form action={requestDeletion} className="col g12" style={{ marginTop: 12 }}>
+                <span className="small muted">Админ баталсны дараа таны бүртгэл, холбоо барих мэдээлэл, онгод, харилцаа, формын хариулт зэрэг бүх өгөгдөл бүрмөсөн устна. Буцаах боломжгүй.</span>
+                <label className="field"><span className="tiny muted">Тайлбар (заавал биш)</span><textarea className="inp" name="note" rows={2} maxLength={1000} /></label>
+                <label className="row small" style={{ gap: 8 }}><input type="checkbox" name="confirm" required style={{ width: 18, height: 18 }} />Миний бүх өгөгдлийг устгахыг хүсэж байна.</label>
+                <div><ConfirmButton className="btn sm danger" message="Устгах хүсэлт илгээх үү?">Устгах хүсэлт илгээх</ConfirmButton></div>
+              </form>
+            </details>
+          )}
+        </div>
+      </div>
     </>
   );
 }

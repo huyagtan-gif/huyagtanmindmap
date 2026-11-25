@@ -4,8 +4,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { changeStatus } from "@/app/actions/person";
 import { VIEWS, type ViewKey } from "@/lib/fields";
+import { exportMap, type XEdge, type XNode } from "./mapExport";
 import { LiveBadge } from "./Realtime";
-import { Avatar, Icon, Locked, Shape, StatusChip, pal } from "./ui";
+import { Avatar, Icon, Locked, PAL, Shape, StatusChip, initials, pal } from "./ui";
 
 export type MStatus = { id: string; name: string; pal: number; shape: string; description: string | null };
 export type MOngod = { id: string; parent_id: string | null; name: string; kind: "group" | "ongod"; era_id: string | null; needs_review: boolean };
@@ -20,7 +21,7 @@ type TNode = { key: string; kind: "root" | "k" | "g" | "o" | "e" | "p"; label: s
 
 type Props = {
   urguuName: string; statuses: MStatus[]; eras: { id: string; name: string }[]; ongods: MOngod[]; people: MPerson[];
-  canStatus: boolean; canEdit: boolean; views: ViewKey[]; initialView: ViewKey; meId: string | null; initialEgo: string | null;
+  canStatus: boolean; canEdit: boolean; canExport: boolean; views: ViewKey[]; initialView: ViewKey; meId: string | null; initialEgo: string | null;
   recent: { what: string; who: string; at: string }[];
 };
 
@@ -344,7 +345,7 @@ export function MapView(props: Props) {
         </>
       ) : (
         <div className="mapwrap">
-          <TreeCanvas key={view} view={view} root={tree} pBy={pBy} stBy={stBy} off={off} sel={sel} setSel={setSel} zoom={zoom} setZoom={setZoom}
+          <TreeCanvas key={view} view={view} canExport={props.canExport} rootName={props.urguuName} root={tree} pBy={pBy} stBy={stBy} off={off} sel={sel} setSel={setSel} zoom={zoom} setZoom={setZoom}
             collapsed={collapsed} setCollapsed={setCollapsed} matchQ={matchQ} hasHit={hasHit} ql={ql} statuses={statuses} />
           <aside className="panel" aria-label="Дэлгэрэнгүй">
             {sel && pBy.get(sel) ? quickCard(sel) : (
@@ -372,8 +373,10 @@ export function MapView(props: Props) {
 }
 
 /* ---------- Онгодын мод (компьютер) ---------- */
-function TreeCanvas({ view, root, pBy, stBy, off, sel, setSel, zoom, setZoom, collapsed, setCollapsed, matchQ, hasHit, ql, statuses }: {
-  view: ViewKey; root: TNode; pBy: Map<string, MPerson>; stBy: Map<string, MStatus>; off: Set<string>; sel: string | null; setSel: (s: string | null) => void;
+const nodeH = (n: TNode) => (n.key === "root" ? 44 : n.kind === "k" ? 38 : 34);
+
+function TreeCanvas({ view, canExport, rootName, root, pBy, stBy, off, sel, setSel, zoom, setZoom, collapsed, setCollapsed, matchQ, hasHit, ql, statuses }: {
+  view: ViewKey; canExport: boolean; rootName: string; root: TNode; pBy: Map<string, MPerson>; stBy: Map<string, MStatus>; off: Set<string>; sel: string | null; setSel: (s: string | null) => void;
   zoom: number; setZoom: (f: (z: number) => number) => void; collapsed: Record<string, boolean>; setCollapsed: (f: (c: Record<string, boolean>) => Record<string, boolean>) => void;
   matchQ: (n: TNode) => boolean; hasHit: (n: TNode) => boolean; ql: string; statuses: MStatus[];
 }) {
@@ -403,7 +406,7 @@ function TreeCanvas({ view, root, pBy, stBy, off, sel, setSel, zoom, setZoom, co
     walk(root, 0, []);
     const colX = [24];
     for (let i = 1; i < colW.length; i++) colX[i] = colX[i - 1] + colW[i - 1] + GAP;
-    const H = (n: TNode) => (n.key === "root" ? 44 : n.kind === "k" ? 38 : 34);
+    const H = nodeH;
     let paths = "", hot = "";
     const hotSet = new Set(selChain);
     nodes.forEach((n) => { n.x = colX[n.depth!]; });
@@ -431,6 +434,33 @@ function TreeCanvas({ view, root, pBy, stBy, off, sel, setSel, zoom, setZoom, co
     const hit = ms.current?.querySelector(".node.hit") as HTMLElement | null;
     hit?.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
   }, [ql]);
+
+  // P2.6: одоо харагдаж буй (эвхсэн, шүүсэн) модыг PNG / PDF болгон татна.
+  const [busy, setBusy] = useState(false);
+  const doExport = async (fmt: "png" | "pdf") => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const hot = new Set(L.selChain);
+      const edges: XEdge[] = [];
+      const nodes: XNode[] = L.nodes.map((n) => {
+        const h = nodeH(n);
+        for (const c of n.kids || []) edges.push({ x1: n.x! + n.w!, y1: n.y! + h / 2, x2: c.x!, y2: c.y! + nodeH(c) / 2, hot: hot.has(n) && hot.has(c) });
+        const p = n.kind === "p" ? pBy.get(n.pid!) : undefined;
+        const st = p?.reg ? stBy.get(p.status_id || "") : undefined;
+        const c = st ? pal(st.pal) : n.kind === "p" && p?.reg ? PAL[4] : pal(0);
+        return {
+          x: n.x!, y: n.y!, w: n.w!, h, label: n.label, kind: n.kind, big: n.key === "root" && n.kind === "p",
+          ...(n.kind === "p" ? { border: c.c, dashed: !!p && !p.reg, ink: p && !p.reg ? "#5A6576" : undefined, avatar: { text: initials(n.label), bg: c.s, ink: c.i } } : {}),
+          cnt: (n.kind === "k" || n.kind === "g") && n.children.length ? countP(n) : undefined,
+        };
+      });
+      const day = new Date().toISOString().slice(0, 10);
+      await exportMap(fmt, nodes, edges, L.W, L.Ht, `${root.kind === "p" ? root.label + " · " : ""}${VIEW_NAME.get(view)} · ${rootName} · ${day}`, `huyagtan-${view}-${day}`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const fit = () => {
     const el = ms.current;
@@ -489,6 +519,12 @@ function TreeCanvas({ view, root, pBy, stBy, off, sel, setSel, zoom, setZoom, co
         <button aria-label="Томруулах" onClick={() => setZoom((z) => Math.min(1.8, z + 0.15))}>+</button>
         <button aria-label="Бүгдийг харах" onClick={fit}><Icon n="fit" s={18} /></button>
         <button aria-label="Жижигрүүлэх" onClick={() => setZoom((z) => Math.max(0.3, z - 0.15))}>−</button>
+        {canExport ? (
+          <>
+            <button aria-label="PNG зураг татах" title="PNG зураг татах" disabled={busy} onClick={() => doExport("png")} style={{ fontSize: 11, fontWeight: 700 }}>PNG</button>
+            <button aria-label="PDF татах" title="PDF татах" disabled={busy} onClick={() => doExport("pdf")} style={{ fontSize: 11, fontWeight: 700 }}>PDF</button>
+          </>
+        ) : null}
       </div>
     </section>
   );

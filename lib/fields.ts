@@ -27,6 +27,7 @@ export const PERMISSIONS = [
   { key: "import.run", name: "Импорт хийх" },
   { key: "role.view_as", name: "Түвшнээр харах" },
   { key: "world.view", name: "«Дэлхийн үрс» харах" },
+  { key: "data.request", name: "Устгах хүсэлт шийдвэрлэх" },
 ] as const;
 export type PermKey = (typeof PERMISSIONS)[number]["key"];
 
