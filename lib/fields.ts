@@ -28,6 +28,10 @@ export const PERMISSIONS = [
   { key: "role.view_as", name: "Түвшнээр харах" },
   { key: "world.view", name: "«Дэлхийн үрс» харах" },
   { key: "data.request", name: "Устгах хүсэлт шийдвэрлэх" },
+  { key: "event.manage", name: "Үйл ажиллагаа удирдах" },
+  { key: "training.manage", name: "Сургалт удирдах" },
+  { key: "finance.view", name: "Санхүүгийн тайлан харах" },
+  { key: "payment.manage", name: "Төлбөрийн тохиргоо, буцаалт" },
 ] as const;
 export type PermKey = (typeof PERMISSIONS)[number]["key"];
 
@@ -39,5 +43,6 @@ export const VIEWS = [
   { key: "kanban", name: "Явцын самбар" },
   { key: "deedes", name: "Дээдсээр" },
   { key: "ego", name: "Нэг хүн төвд" },
+  { key: "event", name: "Үйлээр" },
 ] as const;
 export type ViewKey = (typeof VIEWS)[number]["key"];

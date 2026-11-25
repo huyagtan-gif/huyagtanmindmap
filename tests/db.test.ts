@@ -136,10 +136,10 @@ d("өгөгдлийн сан: миграци, RLS, audit, импорт", () => {
     expect(JSON.stringify(got)).not.toMatch(/Дохио-тест|8888|signal-secret/);
   });
 
-  it("харагдацын эрх: зургаан харагдац түвшин бүрт seed болсон (P2.2)", async () => {
+  it("харагдацын эрх: долоон харагдац (P2.2 + P3.8 «Үйлээр») түвшин бүрт seed болсон", async () => {
     const rows = await db.sys("SELECT r.name, count(*)::int AS n FROM role r JOIN role_view rv ON rv.role_id = r.id WHERE r.urguu_id = $1 GROUP BY r.name", [A]);
     expect(rows).toHaveLength(4);
-    expect(rows.every((r) => r.n === 6)).toBe(true);
+    expect(rows.every((r) => r.n === 7)).toBe(true);
   });
 
   it("outbox: амжилтгүй илгээлт дараалалд үлдэж дахин оролдогдоно, апп-ын role уншихгүй (P2.7)", async () => {
@@ -373,5 +373,146 @@ d("өгөгдлийн сан: миграци, RLS, audit, импорт", () => {
     expect((await db.sys("SELECT count(*)::int AS n FROM error_log"))[0].n).toBe(2);
     expect(await db.sys("SELECT 1 FROM notification_outbox WHERE recipient = 'ops-alert@example.com'")).toHaveLength(1);
     await expect(db.withCtx({ personId: admin, urguuId: A }, (q) => q("SELECT * FROM error_log"))).rejects.toThrow(/permission denied/);
+  });
+
+  /* ---------------- Phase 3 ---------------- */
+  const mkTraining = async (urguu: string, o: { capacity?: number | null; fee?: number; scope?: string; is_field?: boolean } = {}) =>
+    (await db.sys("INSERT INTO training (urguu_id, name, capacity, fee, scope, is_field, public_code) VALUES ($1, 'Туршилтын сургалт', $2, $3, $4, $5, substr(md5(random()::text), 1, 10)) RETURNING id",
+      [urguu, o.capacity ?? null, o.fee ?? 0, o.scope ?? "members", o.is_field ?? false]))[0].id as string;
+  const mkPeople = async (n: number, urguu = A) =>
+    (await db.sys("INSERT INTO person (given_name, created_urguu_id) SELECT 'Оролцогч-' || g, $2 FROM generate_series(1, $1) g RETURNING id", [n, urguu])).map((r) => r.id as string);
+
+  it("сургалт: хязгаар дүүрвэл хүлээлгэд, суудал суларвал дарааллаар дэвшинэ (P3.3)", async () => {
+    const { joinTraining, leaveTraining } = await import("@/lib/training");
+    const tid = await mkTraining(A, { capacity: 2, fee: 50000 });
+    const [p1, p2, p3, p4] = await mkPeople(4);
+    const r = await db.withCtx({ personId: admin, urguuId: A }, async (q) => [
+      await joinTraining(q, { trainingId: tid, personId: p1, source: "self" }),
+      await joinTraining(q, { trainingId: tid, personId: p2, source: "self" }),
+      await joinTraining(q, { trainingId: tid, personId: p3, source: "self" }),
+      await joinTraining(q, { trainingId: tid, personId: p4, source: "self" }),
+      await joinTraining(q, { trainingId: tid, personId: p1, source: "self" }),
+    ]);
+    expect(r.map((x) => x.state)).toEqual(["yes", "yes", "waitlist", "waitlist", "yes"]);
+    expect(r[4].changed).toBe(false);
+    expect((await db.sys("SELECT pay_state FROM training_participant WHERE training_id = $1 AND person_id = $2", [tid, p1]))[0].pay_state).toBe("pending");
+    const promoted = await db.withCtx({ personId: admin, urguuId: A }, (q) => leaveTraining(q, tid, p2, "no"));
+    expect(promoted).toEqual([p3]);
+    const st = Object.fromEntries((await db.sys("SELECT person_id, state FROM training_participant WHERE training_id = $1", [tid])).map((x) => [x.person_id, x.state]));
+    expect(st).toMatchObject({ [p1]: "yes", [p2]: "no", [p3]: "yes", [p4]: "waitlist" });
+    // Админ эсвэл QR (хязгааргүй) хүлээлгийн хүнийг шууд оруулна
+    const x = await db.withCtx({ personId: admin, urguuId: A }, (q) => joinTraining(q, { trainingId: tid, personId: p4, source: "admin", ignoreCapacity: true }));
+    expect(x).toMatchObject({ state: "yes", changed: true });
+  });
+
+  it("сургалт: RLS: хамтрагч өргөө уншина, зөвхөн тэргүүлэх өргөө бичнэ, бусад өргөө юу ч харахгүй (P3.2)", async () => {
+    const [{ id: C }] = await db.sys("INSERT INTO urguu (name) VALUES ('Гурав дахь өргөө') RETURNING id");
+    const tid = await mkTraining(A);
+    const [pa] = await mkPeople(1, A);
+    await db.sys("INSERT INTO person_private (person_id, phone, email) VALUES ($1, '+97622220000', 'pa-secret@example.com')", [pa]);
+    await db.sys("INSERT INTO training_urguu (training_id, urguu_id, is_lead, share_pct) VALUES ($1, $2, true, 70), ($1, $3, false, 30)", [tid, A, B]);
+    await db.sys("INSERT INTO training_participant (training_id, person_id, state) VALUES ($1, $2, 'yes')", [tid, pa]);
+    await db.withCtx({ personId: admin, urguuId: B }, async (q) => {
+      expect(await q("SELECT 1 FROM training WHERE id = $1", [tid])).toHaveLength(1);
+      expect(await q("SELECT 1 FROM training_participant WHERE training_id = $1", [tid])).toHaveLength(1);
+      // Нэрийг л харна: хувийн мэдээлэл, хүний бүтэн мөр өргөө дамжихгүй
+      expect(await q("SELECT given_name FROM training_people($1)", [tid])).toEqual([{ given_name: "Оролцогч-1" }]);
+      expect(await q("SELECT 1 FROM person WHERE id = $1", [pa])).toHaveLength(0);
+      expect(await q("SELECT 1 FROM person_private WHERE person_id = $1", [pa])).toHaveLength(0);
+      expect(await q("UPDATE training SET name = 'x' WHERE id = $1 RETURNING id", [tid])).toHaveLength(0);
+      expect(await q("UPDATE training_participant SET state = 'no' WHERE training_id = $1 RETURNING id", [tid])).toHaveLength(0);
+    });
+    await db.withCtx({ personId: admin, urguuId: C }, async (q) => {
+      expect(await q("SELECT 1 FROM training WHERE id = $1", [tid])).toHaveLength(0);
+      expect(await q("SELECT * FROM training_people($1)", [tid])).toHaveLength(0);
+    });
+    // Оролцогч өөрөө аль ч өргөөний контекстоос өөрийн мөрөө харна
+    expect(await db.withCtx({ personId: pa, urguuId: C }, (q) => q("SELECT state FROM training_participant WHERE person_id = $1", [pa]))).toEqual([{ state: "yes" }]);
+  });
+
+  it("үйл: өргөөгөөр тусгаарлагдана, шинэ өргөөнд төрөл ба үүрэг хуулагдана (P3.1)", async () => {
+    const [{ id: e }] = await db.sys("INSERT INTO event (urguu_id, name, starts_at) VALUES ($1, 'Тахилга', now() + interval '1 day') RETURNING id", [A]);
+    expect(await db.withCtx({ personId: admin, urguuId: A }, (q) => q("SELECT 1 FROM event WHERE id = $1", [e]))).toHaveLength(1);
+    expect(await db.withCtx({ personId: admin, urguuId: B }, (q) => q("SELECT 1 FROM event WHERE id = $1", [e]))).toHaveLength(0);
+    const types = await db.sys("SELECT count(*)::int AS n FROM event_type WHERE urguu_id = $1", [A]);
+    expect(types[0].n).toBe(4);
+    const { createUrguu } = await import("@/lib/urguu");
+    const nu = await db.sysTx({}, (q) => createUrguu(q, { name: "Шинэ өргөө-3", description: null, templateId: A, ongodFromId: null }));
+    const c = await db.sys("SELECT (SELECT count(*) FROM event_type WHERE urguu_id = $1)::int AS t, (SELECT count(*) FROM event_role WHERE urguu_id = $1)::int AS r", [nu]);
+    expect(c[0]).toEqual({ t: 4, r: 4 });
+  });
+
+  it("QR ирцийн токен 15 минут тутам эргэнэ, өмнөх цонх л хүчинтэй (P3.5)", async () => {
+    const { attToken, attTokenValid } = await import("@/lib/training");
+    const sid = "3f2b6c1e-1111-4222-8333-444455556666", t0 = 1_800_000_000_000;
+    const tok = attToken(sid, t0);
+    expect(tok).toMatch(/^[\w-]{16}$/);
+    expect(attTokenValid(sid, tok, t0)).toBe(true);
+    expect(attTokenValid(sid, tok, t0 + 15 * 60_000)).toBe(true);
+    expect(attTokenValid(sid, tok, t0 + 30 * 60_000)).toBe(false);
+    expect(attTokenValid("3f2b6c1e-1111-4222-8333-444455556667", tok, t0)).toBe(false);
+    expect(attTokenValid(sid, "x".repeat(16), t0)).toBe(false);
+  });
+
+  it("нийтийн бүртгэл ба QR: зочин давхардахгүй, баталгаажаагүй утсаар гишүүнд наалдахгүй, ирц нэг л удаа (P3.4, P3.5)", async () => {
+    const { registerPublic, participantByToken, checkIn, resolveGuest } = await import("@/lib/public");
+    const tid = await mkTraining(A, { scope: "public", capacity: 1 });
+    const t = (await db.sys("SELECT id, urguu_id, name, state, scope, reg_mode, fee, capacity, public_code FROM training WHERE id = $1", [tid]))[0];
+    const [member] = await mkPeople(1);
+    await db.sys("UPDATE person SET given_name = 'Гишүүнбат' WHERE id = $1", [member]);
+    await db.sys("INSERT INTO person_private (person_id, phone, phone_verified) VALUES ($1, '+97633330000', true)", [member]);
+    // Гишүүний дугаарыг өөр нэрээр, баталгаажуулалтгүй бичвэл шинэ зочин үүснэ (гишүүний бүртгэлд орохгүй)
+    const g1 = await db.sysTx({ urguuId: A }, (q) => registerPublic(q, t, { father: null, given: "Өөр хүн", phone: "+97633330000", email: null, phoneVerified: false }));
+    expect(g1.personId).not.toBe(member);
+    expect(g1.state).toBe("yes");
+    expect((await db.sys("SELECT is_registered FROM person WHERE id = $1", [g1.personId]))[0].is_registered).toBe(false);
+    // SMS-ээр баталгаажуулсан бол дугаарын эзэн (гишүүн) рүү холбогдоно; суудал дүүрсэн тул хүлээлгэд
+    const g2 = await db.sysTx({ urguuId: A }, (q) => registerPublic(q, t, { father: null, given: "Гишүүнбат", phone: "+97633330000", email: null, phoneVerified: true }));
+    expect(g2).toMatchObject({ personId: member, state: "waitlist" });
+    // Ижил зочин дахин бүртгүүлбэл шинэ хүн үүсэхгүй
+    const again = await db.sysTx({ urguuId: A }, (q) => resolveGuest(q, A, { father: null, given: "Өөр хүн", phone: "+97633330000", email: null, phoneVerified: false }));
+    expect(again).toEqual({ personId: g1.personId, created: false });
+    // Токеноор зөвхөн өөрийн мөр, hash-аар хадгалагдсан
+    const p = await db.sysTx({}, (q) => participantByToken(q, t.public_code, g1.token));
+    expect(p?.person_id).toBe(g1.personId);
+    expect(await db.sys("SELECT 1 FROM training_participant WHERE access_hash = $1", [g1.token])).toHaveLength(0);
+    expect(await db.sysTx({}, (q) => participantByToken(q, "wrongcode1", g1.token))).toBeNull();
+    // QR ирц: давхар уншуулахад нэг мөр, хүлээлгийн хүн биеэр ирвэл оролцогч болно
+    const [{ id: sid }] = await db.sys("INSERT INTO training_session (training_id, starts_at, qr_open) VALUES ($1, now(), true) RETURNING id", [tid]);
+    expect(await db.sysTx({ urguuId: A }, (q) => checkIn(q, { trainingId: tid, sessionId: sid, personId: member, allowNew: false }))).toBe("ok");
+    expect(await db.sysTx({ urguuId: A }, (q) => checkIn(q, { trainingId: tid, sessionId: sid, personId: member, allowNew: false }))).toBe("already");
+    expect((await db.sys("SELECT state FROM training_participant WHERE training_id = $1 AND person_id = $2", [tid, member]))[0].state).toBe("yes");
+    const [stranger] = await mkPeople(1);
+    expect(await db.sysTx({ urguuId: A }, (q) => checkIn(q, { trainingId: tid, sessionId: sid, personId: stranger, allowNew: false }))).toBe("not_listed");
+    expect((await db.sys("SELECT count(*)::int AS n FROM training_attendance WHERE session_id = $1", [sid]))[0].n).toBe(1);
+  });
+
+  it("хээрийн сургалт дүүргэвэл «Хээрийн сургалтад суусан» автоматаар тэмдэглэгдэнэ (P3.6)", async () => {
+    const { syncFieldTraining } = await import("@/lib/training");
+    const tid = await mkTraining(A, { is_field: true });
+    const [a, b] = await mkPeople(2);
+    await db.sys("INSERT INTO training_participant (training_id, person_id, state, completion) VALUES ($1, $2, 'yes', 'completed'), ($1, $3, 'yes', 'incomplete')", [tid, a, b]);
+    await db.withCtx({ personId: admin, urguuId: A }, (q) => syncFieldTraining(q, [a, b]));
+    const r = Object.fromEntries((await db.sys("SELECT id, field_training FROM person WHERE id = ANY($1::uuid[])", [[a, b]])).map((x) => [x.id, x.field_training]));
+    expect(r).toEqual({ [a]: true, [b]: null });
+  });
+
+  it("сануулга: 24 цагийн дотор эхлэх үйл, хичээлд нэг л удаа очно (P3.9)", async () => {
+    const { sendReminders } = await import("@/lib/reminders");
+    await db.sys("UPDATE event SET reminded_at = now() WHERE reminded_at IS NULL");
+    await db.sys("UPDATE training_session SET reminded_at = now() WHERE reminded_at IS NULL");
+    const [p] = await mkPeople(1);
+    await db.sys("INSERT INTO person_private (person_id, email) VALUES ($1, 'remind-me@example.com')", [p]);
+    const [{ id: e }] = await db.sys("INSERT INTO event (urguu_id, name, starts_at) VALUES ($1, 'Маргаашийн үйл', now() + interval '20 hours') RETURNING id", [A]);
+    await db.sys("INSERT INTO event (urguu_id, name, starts_at) VALUES ($1, 'Хойтон', now() + interval '3 days')", [A]);
+    await db.sys("INSERT INTO event_participant (event_id, urguu_id, person_id, rsvp) VALUES ($1, $2, $3, 'yes')", [e, A, p]);
+    const tid = await mkTraining(A);
+    await db.sys("UPDATE training SET state = 'open' WHERE id = $1", [tid]);
+    await db.sys("INSERT INTO training_session (training_id, starts_at) VALUES ($1, now() + interval '2 hours')", [tid]);
+    await db.sys("INSERT INTO training_participant (training_id, person_id, state) VALUES ($1, $2, 'yes')", [tid, p]);
+    expect(await sendReminders()).toBe(2);
+    expect(await sendReminders()).toBe(0);
+    const t = (await db.sys("SELECT template FROM notification_outbox WHERE recipient = 'remind-me@example.com' ORDER BY id")).map((x) => x.template);
+    expect(t).toEqual(["event_reminder", "training_reminder"]);
   });
 });

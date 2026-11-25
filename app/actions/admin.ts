@@ -105,6 +105,8 @@ const LISTS: Record<string, { extra: string[] }> = {
   era: { extra: ["color"] },
   relation_type: { extra: [] },
   deedes: { extra: ["description"] },
+  event_type: { extra: [] },
+  event_role: { extra: [] },
 };
 const listVals = (fd: FormData, table: string) => {
   const cols: Record<string, unknown> = { name: str(fd, "name", 120), sort: int(str(fd, "sort")), active: fd.get("active") === "on" || fd.get("active") === "true" };

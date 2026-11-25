@@ -1,6 +1,7 @@
 import { processOutbox } from "./outbox";
 import { purgeOtps } from "./otp";
 import { logError, purgeErrors } from "./errors";
+import { sendReminders } from "./reminders";
 
 // Дэвсгэр ажилчин: нэг процесс, минут тутам. Outbox-ын хугацаа болсон мэдэгдлийг илгээнэ, хуучин кодыг цэвэрлэнэ.
 const g = globalThis as unknown as { __worker?: boolean };
@@ -15,6 +16,7 @@ export function startWorker() {
     busy = true;
     try {
       await processOutbox();
+      if (n % 10 === 0) await sendReminders(); // P3.9
       if (n++ % 60 === 0) {
         await purgeOtps();
         await purgeErrors();

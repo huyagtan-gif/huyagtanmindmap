@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "./ui";
 
-export type NavItem = { href: string; name: string; short?: string; icon: string; badge?: number; admin?: boolean };
+export type NavItem = { href: string; name: string; short?: string; icon: string; badge?: number; admin?: boolean; /** зөвхөн өргөн дэлгэцийн цэсэнд (утсанд Календариас орно) */ desk?: boolean };
 
 const isOn = (path: string, href: string) => path === href || path.startsWith(href + "/");
 

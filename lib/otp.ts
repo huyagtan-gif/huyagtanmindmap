@@ -3,7 +3,7 @@ import { sys } from "./db";
 import { sendSms } from "./sms";
 
 // P2.3: SMS нэг удаагийн код. 6 орон, 5 минут хүчинтэй, 5 хүртэл оролдлого, hash-аар хадгална.
-export type OtpPurpose = "verify" | "login";
+export type OtpPurpose = "verify" | "login" | "public";
 const TTL_MIN = 5;
 const MAX_TRIES = 5;
 const MAX_PER_PHONE = 5; // 15 минутад нэг дугаарт илгээх дээд тоо (N6)

@@ -3,6 +3,7 @@ import { confirmPhoneVerify, requestJoin, requestPhoneVerify } from "@/app/actio
 import { cancelDeletion, requestDeletion } from "@/app/actions/privacy";
 import { ConfirmButton } from "@/components/AutoSubmit";
 import { PersonForm } from "@/components/PersonForm";
+import { MySchedule } from "@/components/Schedule";
 import { sys } from "@/lib/db";
 import { smsMode } from "@/lib/sms";
 import { requireMember } from "@/lib/viewer";
@@ -71,6 +72,7 @@ export default async function Me({ searchParams }: { searchParams: Promise<{ e?:
       {sp.saved ? <div className="banner ok" role="status">Хадгалагдлаа. Mind map шинэчлэгдсэн.</div> : null}
       {sp.e ? <div className="banner bad" role="alert">{ERR[sp.e] || ERR.save}</div> : null}
       {!v.formCompleted && !sp.saved ? <div className="banner info">Тавтай морил! Бүртгэлийн формоо бөглөөд «Хадгалах» дарна уу. Дараа нь хэдийд ч засаж болно.</div> : null}
+      <MySchedule v={v} />
       <PersonForm viewer={v} personId={v.personId} returnTo="/me" />
       <div className="card col g12" id="account">
         <h2>Нэвтрэлт</h2>

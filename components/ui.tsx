@@ -36,6 +36,13 @@ const I: Record<string, ReactNode> = {
   sys: <><rect x="3" y="4" width="18" height="7" rx="2" /><rect x="3" y="13" width="18" height="7" rx="2" /><path d="M7 7.5h.01M7 16.5h.01" /></>,
   globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.300 6.400-3.800 9c-2.500-2.600-3.800-5.600-3.800-9S9.500 5.600 12 3z" /></>,
   down2: <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />,
+  cal: <><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" /></>,
+  cap: <><path d="M2.5 9.5L12 5l9.5 4.500L12 14z" /><path d="M6.500 12v4.500c1.500 1.500 3.300 2.200 5.500 2.200s4-.700 5.500-2.200V12M21.500 9.500v5" /></>,
+  pin: <><path d="M12 21s-6.500-5.600-6.500-10.500a6.500 6.500 0 0 1 13 0C18.500 15.400 12 21 12 21z" /><circle cx="12" cy="10.500" r="2.300" /></>,
+  heart: <path d="M12 20s-7.500-4.600-7.500-10A4.300 4.300 0 0 1 12 7.500 4.300 4.300 0 0 1 19.500 10c0 5.400-7.500 10-7.500 10z" />,
+  qr: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><path d="M14 14h2.500v2.500H14zM17.500 17.500H20V20h-2.500zM14 19.500h1M19.500 14h.5" /></>,
+  money: <><rect x="3" y="6" width="18" height="12" rx="2.500" /><circle cx="12" cy="12" r="2.500" /><path d="M6.500 9.500v.01M17.500 14.500v.01" /></>,
+  bell: <path d="M6 16.500V11a6 6 0 0 1 12 0v5.500l1.500 2h-15zM10 20.500a2 2 0 0 0 4 0" />,
 };
 
 export function Icon({ n, s = 20, w = 2 }: { n: string; s?: number; w?: number }) {
@@ -82,6 +89,12 @@ export function Avatar({ name, st, size = 36 }: { name: string; st?: StatusLike;
 
 export function Locked() {
   return <span className="lock"><Icon n="lock" s={12} w={2.4} />Нууцлагдсан</span>;
+}
+
+/** Огнооны дөрвөлжин тэмдэг (өдөр + сар). */
+export function DateBadge({ ymd }: { ymd: string }) {
+  const [, m, d] = ymd.split("-").map(Number);
+  return <span className="datebadge"><b>{d}</b><span>{m}-р сар</span></span>;
 }
 
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {

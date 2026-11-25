@@ -18,6 +18,9 @@ type Err = { id: string; source: string; message: string; stack: string | null; 
 const TEMPLATE: Record<string, string> = {
   magic_link: "Нэвтрэх холбоос", invite: "Урилга", admin_new_request: "Админд: шинэ хүсэлт", membership_approved: "Бүртгэл батлагдсан",
   membership_rejected: "Бүртгэл татгалзсан", otp_login: "SMS код (нэвтрэх)", otp_verify: "SMS код (утас баталгаажуулах)",
+  otp_public: "SMS код (нийтийн бүртгэл)", training_invite: "Сургалтын урилга", training_promoted: "Хүлээлгээс дэвшсэн", training_public: "Нийтийн бүртгэлийн баталгаа",
+  event_reminder: "Үйлийн сануулга", training_reminder: "Сургалтын сануулга", event_invite: "Үйлийн урилга", payment_paid: "Төлбөр баталгаажсан",
+  recon_alert: "Төлбөрийн тулгалтын зөрүү", error_alert: "Алдааны сэрэмжлүүлэг",
 };
 const STATE: Record<string, [string, string]> = { queued: ["warn", "Хүлээгдэж буй"], sent: ["ok", "Илгээгдсэн"], failed: ["bad", "Амжилтгүй"] };
 

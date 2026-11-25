@@ -23,7 +23,10 @@ type Props = {
   urguuName: string; statuses: MStatus[]; eras: { id: string; name: string }[]; ongods: MOngod[]; people: MPerson[];
   canStatus: boolean; canEdit: boolean; canExport: boolean; views: ViewKey[]; initialView: ViewKey; meId: string | null; initialEgo: string | null;
   recent: { what: string; who: string; at: string }[];
+  /** P3.8 «Үйлээр» харагдац: үйл бүрийн оролцогчид үүргээрээ */
+  events?: MEvent[]; initialEvent?: string | null;
 };
+export type MEvent = { id: string; name: string; date: string; parts: { pid: string; role: string | null }[] };
 
 type NetRel = "teacher" | "supporter" | "introducer";
 const NET: Record<NetRel, { name: string; none: string }> = {
@@ -67,6 +70,9 @@ export function MapView(props: Props) {
   const [view, setView] = useState<ViewKey>(props.initialView);
   const [ego, setEgo] = useState<string | null>(props.initialEgo);
   const [netRel, setNetRel] = useState<NetRel>("teacher");
+  const events = props.events || [];
+  const [evId, setEvId] = useState<string | null>(props.initialEvent || null);
+  const curEv = events.find((e) => e.id === evId) || events[0] || null;
   const [q, setQ] = useState("");
   const [off, setOff] = useState<Set<string>>(new Set());
   const [era, setEra] = useState("");
@@ -160,6 +166,19 @@ export function MapView(props: Props) {
       return rootOf(ch);
     }
 
+    if (view === "event") {
+      // Үйл төвд: үүрэг → оролцогчид.
+      if (!curEv) return rootOf([]);
+      const by = new Map<string, TNode[]>();
+      for (const x of curEv.parts) {
+        const p = pBy.get(x.pid);
+        if (!p) continue;
+        const k = x.role || "Оролцогч";
+        (by.get(k) || by.set(k, []).get(k)!).push(pNode(p, "ev" + k));
+      }
+      return { key: "root", kind: "root", label: `${curEv.name} · ${curEv.date}`, children: [...by].map(([k, ch]) => ({ key: "evr:" + k, kind: "g" as const, label: k, children: ch })) };
+    }
+
     if (view === "ego") {
       const c = egoId ? pBy.get(egoId) : undefined;
       if (!c) return rootOf([]);
@@ -203,7 +222,7 @@ export function MapView(props: Props) {
       }
     return rootOf(top);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [people, allPeople, ongods, era, showEmpty, statuses, props.urguuName, view, netRel, egoId, eras]);
+  }, [people, allPeople, ongods, era, showEmpty, statuses, props.urguuName, view, netRel, egoId, eras, curEv]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -320,6 +339,15 @@ export function MapView(props: Props) {
               </select>
             </label>
           ) : null}
+          {view === "event" && curEv ? (
+            <label className="search" style={{ padding: "0 10px", gap: 6 }}>
+              <span className="small muted">Үйл</span>
+              <select value={curEv.id} onChange={(e) => { setEvId(e.target.value); window.history.replaceState(null, "", `/map?view=event&ev=${e.target.value}`); }} aria-label="Үйл сонгох" style={{ border: 0, background: "transparent", fontWeight: 600, fontSize: 14, maxWidth: 240 }}>
+                {events.map((e) => <option key={e.id} value={e.id}>{e.date} · {e.name}</option>)}
+              </select>
+            </label>
+          ) : null}
+          {view === "event" && curEv ? <Link className="btn sm" href={`/events/${curEv.id}`}>Үйлийг нээх</Link> : null}
           {view === "ego" ? (
             <label className="search" style={{ padding: "0 10px", gap: 6 }}>
               <span className="small muted">Төвд</span>

@@ -15,7 +15,7 @@ export const metadata = { title: "Тохиргоо" };
 
 const TABS = [
   ["statuses", "Явцын төлөв"], ["roles", "Түвшин, эрх"], ["fields", "Талбарын эрх"], ["members", "Гишүүдийн түвшин"],
-  ["deedes", "Дээдэс"], ["lists", "Жагсаалтууд"], ["questions", "Формын асуулт"], ["grants", "Өргөө хоорондын эрх"],
+  ["deedes", "Дээдэс"], ["lists", "Жагсаалтууд"], ["events", "Үйл, сургалт"], ["questions", "Формын асуулт"], ["grants", "Өргөө хоорондын эрх"],
 ] as const;
 const QTYPES = [["text", "Богино бичвэр"], ["longtext", "Урт бичвэр"], ["yesno", "Тийм / Үгүй"], ["choice", "Сонголт"], ["date", "Огноо"]];
 
@@ -52,6 +52,8 @@ export default async function Settings({ searchParams }: { searchParams: Promise
     perms: await q<{ role_id: string; key: string }>("SELECT role_id, key FROM permission"),
     fperms: await q<{ role_id: string; field_key: string }>("SELECT role_id, field_key FROM field_permission"),
     rviews: await q<{ role_id: string; view: string }>("SELECT role_id, view FROM role_view"),
+    etypes: tab === "events" ? await q<Item>("SELECT id, name, sort, active FROM event_type ORDER BY sort, name") : [],
+    eroles: tab === "events" ? await q<Item>("SELECT id, name, sort, active FROM event_role ORDER BY sort, name") : [],
     questions: tab === "questions" ? await q<any>("SELECT * FROM form_question WHERE urguu_id = app_urguu() ORDER BY sort, text") : [],
     members: tab === "members"
       ? await q<{ person_id: string; father_name: string | null; given_name: string; role_id: string | null }>(
@@ -106,6 +108,12 @@ export default async function Settings({ searchParams }: { searchParams: Promise
         </>
       ) : null}
 
+      {tab === "events" ? (
+        <div className="col g16">
+          <ListEditor table="event_type" tab="events" title="Үйлийн төрөл" hint="Үйл ажиллагаа үүсгэхэд сонгогдоно (жишээ нь Тахилга, Золгох ёслол)." items={d.etypes} />
+          <ListEditor table="event_role" tab="events" title="Оролцогчийн үүрэг" hint="Үйлд оролцогч нэмэхэд сонгогдоно. Эрэмбээр хамгийн сүүлийнх нь анхдагч үүрэг болно." items={d.eroles} />
+        </div>
+      ) : null}
       {tab === "roles" ? (
         <>
           <div className="card p0">

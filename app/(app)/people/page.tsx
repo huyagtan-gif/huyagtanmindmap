@@ -9,12 +9,12 @@ export const metadata = { title: "Хүмүүс" };
 export default async function People({ searchParams }: { searchParams: Promise<ListFilter & { add?: string; e?: string }> }) {
   const v = await requirePerm("person.view");
   const f = await searchParams;
-  const { rows, lk, ongods, total, counts } = await asViewer(v, (q) => loadPeopleList(q, v, f));
+  const { rows, lk, ongods, total, counts, trainings } = await asViewer(v, (q) => loadPeopleList(q, v, f));
   const stBy = new Map(lk.statuses.map((s) => [s.id, s]));
   const kBy = new Map(lk.knowledge.map((s) => [s.id, s.name]));
   const qs = (patch: Record<string, string | undefined>) => {
     const p = new URLSearchParams();
-    for (const [k, val] of Object.entries({ q: f.q, st: f.st, era: f.era, ongod: f.ongod, reg: f.reg, sort: f.sort, dir: f.dir, ...patch })) if (val) p.set(k, val);
+    for (const [k, val] of Object.entries({ q: f.q, st: f.st, era: f.era, ongod: f.ongod, reg: f.reg, act: f.act, tr: f.tr, sort: f.sort, dir: f.dir, ...patch })) if (val) p.set(k, val);
     const s = p.toString();
     return s ? `?${s}` : "";
   };
@@ -31,7 +31,7 @@ export default async function People({ searchParams }: { searchParams: Promise<L
         <div><div className="crumb">{v.urguu.name}</div><h1>Хүмүүс</h1></div>
         <div className="row wrap">
           <form className="row wrap" action="/people" style={{ flex: "1 1 220px" }}>
-            {(["st", "era", "ongod", "reg", "sort", "dir"] as const).map((k) => (f[k] ? <input key={k} type="hidden" name={k} value={f[k]} /> : null))}
+            {(["st", "era", "ongod", "reg", "act", "tr", "sort", "dir"] as const).map((k) => (f[k] ? <input key={k} type="hidden" name={k} value={f[k]} /> : null))}
             <label className="search" style={{ width: 320, maxWidth: "100%", flex: "1 1 220px" }}>
               <Icon n="search" s={16} /><input type="search" name="q" placeholder="Нэр, овог, онгодоор хайх" defaultValue={f.q || ""} aria-label="Хайх" />
             </label>
@@ -76,8 +76,16 @@ export default async function People({ searchParams }: { searchParams: Promise<L
         <select className="inp sm" name="reg" defaultValue={f.reg || ""} style={{ width: "auto" }} aria-label="Бүртгэл">
           <option value="">Бүртгэлтэй гишүүд</option><option value="0">Бүртгэлгүй (нэрээр дурдагдсан)</option><option value="all">Бүгд</option>
         </select>
+        <select className="inp sm" name="act" defaultValue={f.act || ""} style={{ width: "auto" }} aria-label="Оролцоо">
+          <option value="">Оролцоо: бүгд</option><option value="idle6">6 сар оролцоогүй</option>
+        </select>
+        {trainings.length ? (
+          <select className="inp sm" name="tr" defaultValue={f.tr || ""} style={{ width: "auto", maxWidth: 220 }} aria-label="Сургалт">
+            <option value="">Сургалт: бүгд</option>{trainings.map((t) => <option key={t.id} value={t.id}>{t.name}-д суусан</option>)}
+          </select>
+        ) : null}
         <button className="btn sm" type="submit">Шүүх</button>
-        {f.q || f.era || f.ongod || f.reg || f.st ? <Link className="btn sm ghost" href="/people">Цэвэрлэх</Link> : null}
+        {f.q || f.era || f.ongod || f.reg || f.st || f.act || f.tr ? <Link className="btn sm ghost" href="/people">Цэвэрлэх</Link> : null}
         <span className="small muted">{rows.length} илэрц</span>
       </form>
 

@@ -22,6 +22,9 @@ export async function createUrguu(q: Q, o: { name: string; description: string |
     await q("INSERT INTO field_permission (urguu_id, field_key, role_id) SELECT $2, field_key, $1 FROM field_permission WHERE role_id = $3", [n.id, u.id, r.id]);
   }
   await q("INSERT INTO urguu_deedes (urguu_id, deedes_id) SELECT $1, deedes_id FROM urguu_deedes WHERE urguu_id = $2", [u.id, o.templateId]);
+  // Phase 3: үйлийн төрөл, оролцогчийн үүргийн жагсаалт (migration 008-ын trigger/seed байхгүй тул энд хуулна)
+  for (const t of ["event_type", "event_role"])
+    await q(`INSERT INTO ${t} (urguu_id, name, sort, active) SELECT $1, name, sort, active FROM ${t} WHERE urguu_id = $2`, [u.id, o.templateId]);
   if (o.ongodFromId)
     await q(
       `WITH src AS MATERIALIZED (SELECT id, gen_random_uuid() AS nid FROM ongod WHERE urguu_id = $2 AND NOT needs_review)

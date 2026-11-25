@@ -21,6 +21,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const items: NavItem[] = [
     { href: "/map", name: "Mind map", icon: "map" },
     { href: "/people", name: "Хүмүүс", icon: "people" },
+    { href: "/events", name: "Үйл ажиллагаа", icon: "heart", desk: true },
+    { href: "/trainings", name: "Сургалт", icon: "cap", desk: true },
+    { href: "/calendar", name: "Календарь", short: "Хуваарь", icon: "cal" },
     { href: "/me", name: "Миний мэдээлэл", short: "Би", icon: "me" },
   ];
   const p = v.perms;
@@ -85,7 +88,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </main>
         </div>
       </div>
-      <BottomNav items={items.filter((n) => !n.admin).concat(items.filter((n) => n.admin).slice(0, 1))} />
+      <BottomNav items={items.filter((n) => !n.admin && !n.desk).concat(items.filter((n) => n.admin).slice(0, 1))} />
     </RealtimeProvider>
   );
 }

@@ -3,7 +3,7 @@ import { groupBy, loadLookups, loadOngods, loadPeople, loadPersonLinks, ongodEra
 import type { ProjectedPerson, ViewerLike } from "./project";
 
 export type ListRow = ProjectedPerson & { ongodNames: string[]; ongodIds: string[]; eraIds: string[]; supporters: string[]; deedesNames: string[]; search: string };
-export type ListFilter = { q?: string; st?: string; era?: string; ongod?: string; reg?: string; sort?: string; dir?: string };
+export type ListFilter = { q?: string; st?: string; era?: string; ongod?: string; reg?: string; sort?: string; dir?: string; /** P3.8: idle6 = сүүлийн 6 сар үйл, сургалтад оролцоогүй */ act?: string; /** P3.8: энэ сургалтад суусан */ tr?: string };
 
 /** P1.12 / P1.13: хүмүүсийн жагсаалт — хайлт (alias орно), шүүлт (онгод, төлөв, цаг үе), эрэмбэ. */
 export async function loadPeopleList(q: Q, viewer: ViewerLike, f: ListFilter) {
@@ -39,6 +39,19 @@ export async function loadPeopleList(q: Q, viewer: ViewerLike, f: ListFilter) {
   if (f.st) rows = rows.filter((r) => r.status_id === f.st);
   if (f.era) rows = rows.filter((r) => r.eraIds.includes(f.era!));
   if (f.ongod) rows = rows.filter((r) => r.ongodIds.includes(f.ongod!));
+  if (f.act === "idle6") {
+    // Сүүлийн 6 сард ямар нэг үйлд ирсэн эсвэл сургалтын хичээлд суусан хүмүүсийг хасна.
+    const active = new Set((await q<{ person_id: string }>(
+      `SELECT ep.person_id FROM event_participant ep JOIN event e ON e.id = ep.event_id WHERE ep.attended AND e.starts_at > now() - interval '6 months'
+       UNION SELECT ta.person_id FROM training_attendance ta WHERE ta.at > now() - interval '6 months'`)).map((r) => r.person_id));
+    rows = rows.filter((r) => r.is_registered && !active.has(r.id));
+  }
+  if (f.tr && /^[0-9a-f-]{36}$/i.test(f.tr)) {
+    const sat = new Set((await q<{ person_id: string }>(
+      `SELECT person_id FROM training_participant WHERE training_id = $1 AND state = 'yes'
+       UNION SELECT person_id FROM training_attendance WHERE training_id = $1`, [f.tr])).map((r) => r.person_id));
+    rows = rows.filter((r) => sat.has(r.id));
+  }
   if (f.reg === "0") rows = rows.filter((r) => !r.is_registered);
   else if (f.reg !== "all") rows = rows.filter((r) => r.is_registered);
   const stSort = new Map(lk.statuses.map((s) => [s.id, s.sort]));
@@ -56,5 +69,6 @@ export async function loadPeopleList(q: Q, viewer: ViewerLike, f: ListFilter) {
     const x = kf(a), y = kf(b);
     return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "mn")) * dir;
   });
-  return { rows, lk, ongods, total, counts };
+  const trainings = await q<{ id: string; name: string }>("SELECT id, name FROM training WHERE state <> 'draft' ORDER BY created_at DESC LIMIT 100");
+  return { rows, lk, ongods, total, counts, trainings };
 }

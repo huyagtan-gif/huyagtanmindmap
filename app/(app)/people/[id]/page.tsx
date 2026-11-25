@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { changeStatusForm } from "@/app/actions/person";
 import { AutoSubmitSelect } from "@/components/AutoSubmit";
+import { Participation } from "@/components/Schedule";
 import { Avatar, Icon, Locked, Shape, StatusChip } from "@/components/ui";
 import { fmtDateTime } from "@/lib/audit-text";
 import { loadLookups, loadOngods, loadPeople, loadPerson, ongodEra, ongodPaths } from "@/lib/data";
@@ -206,6 +207,7 @@ export default async function PersonCard({ params, searchParams }: { params: Pro
               ) : <span className="small muted">Түүх алга</span>}
             </div>
           ) : null}
+          <Participation v={v} personId={id} />
           {d.aliases.length > 2 || !p.is_registered ? (
             <div className="card col g12">
               <h2>Нэрийн хувилбар</h2>

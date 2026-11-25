@@ -1,12 +1,13 @@
-import { MapView, type MPerson } from "@/components/MapView";
+import { MapView, type MEvent, type MPerson } from "@/components/MapView";
 import { auditText, fmtDateTime } from "@/lib/audit-text";
 import { loadLookups, loadOngods, loadPeople, loadPersonLinks, groupBy } from "@/lib/data";
 import { VIEWS, type ViewKey } from "@/lib/fields";
+import { ubDay } from "@/lib/time";
 import { asViewer, requirePerm } from "@/lib/viewer";
 
 export const metadata = { title: "Mind map" };
 
-export default async function MapPage({ searchParams }: { searchParams: Promise<{ view?: string; ego?: string }> }) {
+export default async function MapPage({ searchParams }: { searchParams: Promise<{ view?: string; ego?: string; ev?: string }> }) {
   const v = await requirePerm("person.view");
   const sp = await searchParams;
   const d = await asViewer(v, async (q) => {
@@ -19,7 +20,16 @@ export default async function MapPage({ searchParams }: { searchParams: Promise<
                   WHERE a.entity IN ('person','membership','ongod') ORDER BY a.id DESC LIMIT 5`)
         : Promise.resolve([]),
     ]);
-    return { lk, ongods, people, links, since, aliases, recent };
+    // P3.8 «Үйлээр» харагдац: сүүлийн үйлүүд ба оролцогчид (ирэх үйлд хариу өгсөн, болсон үйлд ирсэн хүмүүс).
+    const evs = v.views.has("event")
+      ? await q<{ id: string; name: string; starts_at: Date; parts: { pid: string; role: string | null }[] | null }>(
+          `SELECT e.id, e.name, e.starts_at,
+             (SELECT json_agg(json_build_object('pid', ep.person_id, 'role', r.name) ORDER BY r.sort NULLS LAST)
+              FROM event_participant ep LEFT JOIN event_role r ON r.id = ep.role_id
+              WHERE ep.event_id = e.id AND (CASE WHEN e.state = 'done' THEN ep.attended IS TRUE ELSE ep.rsvp <> 'no' END)) AS parts
+           FROM event e WHERE e.state <> 'cancelled' ORDER BY e.starts_at DESC LIMIT 40`)
+      : [];
+    return { lk, ongods, people, links, since, aliases, recent, evs };
   });
   const dName = new Map(d.lk.deedes.map((x) => [x.id, x.name]));
   const po = groupBy(d.links.po, (x) => x.person_id);
@@ -63,6 +73,8 @@ export default async function MapPage({ searchParams }: { searchParams: Promise<
       initialView={initialView}
       meId={v.personId}
       initialEgo={sp.ego && vis.has(sp.ego) ? sp.ego : null}
+      events={d.evs.map((e): MEvent => ({ id: e.id, name: e.name, date: ubDay(e.starts_at), parts: (e.parts || []).filter((x) => vis.has(x.pid)) }))}
+      initialEvent={sp.ev || null}
       recent={d.recent.map((a: any) => ({ what: auditText(a), who: a.who || "Систем", at: fmtDateTime(a.at) }))}
     />
   );

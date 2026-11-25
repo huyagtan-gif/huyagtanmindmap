@@ -6,6 +6,10 @@ const ENTITY: Record<string, string> = {
   field_permission: "Талбарын эрх", status: "Явцын төлөв", knowledge_level: "Мэдлэгийн түвшин", huyag_type: "Хуягийн төрөл",
   era: "Цаг үе", relation_type: "Холбооны төрөл", form_question: "Формын асуулт", form_answer: "Формын хариулт",
   invite: "Урилга", urguu: "Өргөө",
+  event: "Үйл ажиллагаа", event_type: "Үйлийн төрөл", event_role: "Оролцогчийн үүрэг", event_participant: "Үйлийн оролцогч",
+  training: "Сургалт", training_urguu: "Сургалтын хамтрагч өргөө", training_teacher: "Сургалтын багш", training_session: "Сургалтын хичээл",
+  training_participant: "Сургалтын оролцогч", training_attendance: "Сургалтын ирц", training_survey: "Сургалтын үнэлгээ",
+  payment: "Төлбөр", donation: "Хандив", urguu_payment_config: "QPay тохиргоо",
 };
 const ACTION: Record<string, string> = { insert: "нэмэгдсэн", update: "засагдсан", delete: "устгагдсан" };
 
